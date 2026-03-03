@@ -52,13 +52,13 @@ SWIFT_COMPLETOS = OUTPUT_DIR / "Swift_completos.xlsx" # SOLO COMPLETOS (reemplaz
 
 # BD Proveedores
 BD_PROVEEDORES = Path(
-    r"C:\Proyectos Comodin\Origen_Destino DIAN\Dbs\Bd Proveedores.xlsx"
+    r"C:\Users\johangc\Desktop\Desarrollo\Origen_Destino DIAN\Dbs\Bd Proveedores.xlsx"
 )
 BD_COL_NAME = "DB Nombre o razon social del beneficiario"
 
 # BD Swift
 BD_SWIFT = Path(
-    r"C:\Proyectos Comodin\Origen_Destino DIAN\Dbs\Bd Swift.xlsx"
+    r"C:\Users\johangc\Desktop\Desarrollo\Origen_Destino DIAN\Dbs\Bd Swift.xlsx"
 )
 BD_SWIFT_CODE_COL = "CODIGO DE LOS SWIFT"
 BD_SWIFT_PAIS_COL = "PAIS"
@@ -542,3 +542,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+    

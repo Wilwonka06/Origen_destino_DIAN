@@ -37,7 +37,7 @@ LOGGER = logging.getLogger("post_swift_full")
 # RUTAS
 # =========================================================
 # BASE del proyecto (raíz)
-BASE_ROOT = Path(r"C:\Proyectos Comodin\Origen_Destino DIAN")
+BASE_ROOT = Path(r"C:\Users\johangc\Desktop\Desarrollo\Origen_Destino DIAN")
 
 # Carpeta resultados
 BASE_DIR = BASE_ROOT / "resultados"

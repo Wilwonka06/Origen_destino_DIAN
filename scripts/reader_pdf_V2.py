@@ -22,6 +22,8 @@ from __future__ import annotations
 import re
 import logging
 from pathlib import Path
+import os
+import shutil
 from typing import Optional, Dict, List
 from datetime import datetime
 
@@ -34,9 +36,24 @@ import pandas as pd
 # =========================================================
 # CONFIGURACIÓN
 # =========================================================
-TESSERACT_CMD = r"C:\Users\miguelz\AppData\Local\Programs\Tesseract-OCR\tesseract.exe"
-pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
+def _resolve_tesseract_cmd() -> str:
+    env_cmd = os.environ.get("TESSERACT_CMD")
+    if env_cmd and Path(env_cmd).exists():
+        return env_cmd
+    which = shutil.which("tesseract")
+    if which:
+        return which
+    candidates = [
+        r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+        r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+        os.path.join(os.environ.get("USERPROFILE", ""), r"AppData\Local\Programs\Tesseract-OCR\tesseract.exe"),
+    ]
+    for c in candidates:
+        if c and Path(c).exists():
+            return c
+    raise FileNotFoundError("No se encontró tesseract.exe. Instalar Tesseract OCR o definir TESSERACT_CMD.")
 
+pytesseract.pytesseract.tesseract_cmd = _resolve_tesseract_cmd()
 OCR_LANG = "eng"
 OCR_CONFIG = r"--oem 3 --psm 6"
 OCR_DPI = 300
@@ -495,8 +512,8 @@ def write_results_to_excel(results: List[Dict[str, Optional[str]]], output_excel
 # MAIN
 # =========================================================
 if __name__ == "__main__":
-    INPUT_FOLDER_V2 = Path(r"C:\Proyectos Comodin\Origen_Destino DIAN\pdfs V2")
-    OUTPUT_EXCEL = Path(r"C:\Proyectos Comodin\Origen_Destino DIAN\resultado_extraccion.xlsx")
+    INPUT_FOLDER_V2 = Path(r"C:\Users\johangc\Desktop\Desarrollo\Origen_Destino DIAN\pdfs V2")
+    OUTPUT_EXCEL = Path(r"C:\Users\johangc\Desktop\Desarrollo\Origen_Destino DIAN\resultado_extraccion.xlsx")
 
     DEBUG = False  # True para depurar Creditor
 

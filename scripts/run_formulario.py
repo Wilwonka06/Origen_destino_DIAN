@@ -54,7 +54,7 @@ LOGGER = logging.getLogger("cruce_formularios_llave")
 # =========================================================
 # CONFIG
 # =========================================================
-XLSB_PATH = Path(r"C:\Proyectos Comodin\Origen_Destino DIAN\Dbs\Cuenta compensacion 2.xlsb")
+XLSB_PATH = Path(r"C:\Proyectos Comodin\Origen_Destino DIAN\Dbs\Cuenta compensacion.xlsb")
 SHEET_NAME = "COM"
 
 SWIFT_COMPLETOS = Path(r"C:\Proyectos Comodin\Origen_Destino DIAN\resultados\Swift_completos.xlsx")
@@ -296,8 +296,10 @@ def build_com_keys(df_com: pd.DataFrame) -> pd.DataFrame:
     out["detalle_clean"] = out[c_det].apply(_clean_detalle)
 
     out["debito_num"] = out[c_deb].apply(_parse_money_to_float)
-    out["formulario_str"] = out[c_form].astype(str).str.strip()
-
+    out["formulario_str"] = (
+        out[c_form]
+        .apply(lambda x: "" if x is None or (isinstance(x, float) and pd.isna(x)) else str(x).strip())
+    )
     out["row_order"] = range(len(out))
     out = out.drop(columns=["_fecha_dt"], errors="ignore")
     return out
@@ -372,7 +374,7 @@ def update_swift_formulario_for_sheet(df_swift_sheet: pd.DataFrame, df_com_keys:
             forms = [
                 str(x).strip()
                 for x in cand["formulario_str"].tolist()
-                if str(x).strip() != "" and str(x).strip().lower() != "none"
+                if str(x).strip() != "" and str(x).strip().lower() not in ("none", "nan", "nat")
             ]
             if forms:
                 out.loc[out["id"] == sid, "Formulario"] = "-".join(forms)
@@ -609,6 +611,12 @@ def run_update_swift(df_com_filtrado: pd.DataFrame) -> None:
     # Leer Swift
     df_v1 = pd.read_excel(SWIFT_COMPLETOS, sheet_name="V1")
     df_v2 = pd.read_excel(SWIFT_COMPLETOS, sheet_name="V2")
+
+        # ← AGREGAR ESTO:
+    df_v1["Formulario"] = df_v1["Formulario"].astype(object)
+    df_v2["Formulario"] = df_v2["Formulario"].astype(object)
+    df_v1["Llave"] = df_v1["Llave"].astype(object)
+    df_v2["Llave"] = df_v2["Llave"].astype(object)
 
     # PASO 3: Formulario
     LOGGER.info("Aplicando cruce (COM -> Swift) en V1...")
