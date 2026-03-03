@@ -1,0 +1,12 @@
+[workspace]
+restore_data_on_startup = True
+save_data_on_exit = True
+save_history = True
+save_non_project_files = False
+project_type = 'empty-project-type'
+recent_files = ['scripts\\reader_pdf_V1.py', 'scripts\\reader_pdf_V2.py', 'scripts\\run_pipeline.py', '\\\\serfsgtd\\gu\\Finanzas\\Gestión de Ingresos\\Automatizaciones\\Automatizaciones Miguel\\Origen_Destino DIAN\\scripts\\post_validacion_swift.py', '\\\\serfsgtd\\gu\\Finanzas\\Gestión de Ingresos\\Automatizaciones\\Automatizaciones Miguel\\Origen_Destino DIAN\\scripts\\run_formulario.py']
+
+[main]
+version = 0.2.0
+recent_files = []
+
