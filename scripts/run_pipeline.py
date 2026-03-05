@@ -1,264 +1,374 @@
 # -*- coding: utf-8 -*-
 """
-run_pipeline.py  (VERSIÓN LIMPIA)
+run_pipeline.py — Pipeline principal de extracción y enriquecimiento
 
-Flujo:
-1) Ejecuta extracción V1 y V2
-2) Enriquecimientos: Proveedor (fuzzy), Pais/Ciudad (Bd Swift), Nombre personalizado, mayúsculas, limpieza Amount
-3) Separa:
-   - COMPLETOS  -> Swift_completos.xlsx (V1 y V2)  [REEMPLAZA cada ejecución]
-   - INCOMPLETOS-> Swift_manuales.xlsx (V1 y V2)  [REEMPLAZA cada ejecución]
-4) Genera ID único determinístico por registro (no se repite y se conserva entre ejecuciones)
-5) Agrega columnas vacías: Formulario, Llave
+Flujo completo:
+  1) Extracción OCR → reader_pdf_V1 + reader_pdf_V2  (con soporte de caché)
+  2) Enriquecimiento Proveedor → fuzzy match contra Bd Proveedores
+  3) Enriquecimiento Pais/Ciudad → cruce Receiver vs Bd Swift
+  4) Nombre personalizado, mayúsculas, limpieza Amount
+  5) Recálculo de Estado (Completo / Incompleto)
+  6) ID determinístico por registro (uuid5)
+  7) Separación → Swift_completos.xlsx  (solo completos)
+                → Swift_manuales.xlsx   (solo incompletos)
 
-NOTA:
-- Se ELIMINA del script madre la lógica de:
-  - Traslado a Datos_Origen_Destino_V1 / V2 (plantillas Bancolombia)
-  - Acumulado_swift (append)
+CAMBIOS vs versión anterior:
+  - Rutas centralizadas en config.py (eliminadas todas las hardcodeadas)
+  - Logging via core.logger (sin handlers duplicados)
+  - clean_amount_value → core.text_utils.clean_amount_value (mejorado EU/US)
+  - normalize_swift_11 → core.text_utils.normalize_swift_11
+  - ProveedorMatcher   → core.text_utils.ProveedorMatcher (encapsulado y testeable)
+  - excel_utils.write_sheets para escritura robusta
+  - Función run_pipeline_completo() para ser llamada desde main.py
+  - normalize_name / LEGAL_TOKENS / COUNTRY_TOKENS mantenidos aquí
+    (son específicos del dominio de matching de proveedores)
 """
 
 from __future__ import annotations
 
 import re
-import logging
 import unicodedata
 import uuid
+from datetime import date
 from pathlib import Path
-from typing import Tuple, Optional, List, Dict
+from typing import Dict, List, Optional, Tuple, Union
 
 import pandas as pd
 
-# Extractores
-from reader_pdf_V1 import process_folder as process_folder_v1
-from reader_pdf_V2 import process_folder_v2
+import config
+from core.logger import get_logger
+from core.text_utils import (
+    clean_amount_value,
+    normalize_swift_11,
+    build_nombre_personalizado,
+)
+from core.excel_utils import write_sheets, reorder_columns
+from core.validators import validate_input_files, validate_output_dirs
+
+from scripts.reader_pdf_V1 import process_folder as process_folder_v1
+from scripts.reader_pdf_V2 import process_folder_v2
+
+LOGGER = get_logger(__name__)
 
 
 # =========================================================
-# CONFIGURACIÓN
+# DESCUBRIMIENTO DE PDFs POR VERSIÓN (fuente de red)
 # =========================================================
-INPUT_FOLDER_V1 = Path(
-    r"C:\Proyectos Comodin\Origen_Destino DIAN\pdfs V1"
-)
-INPUT_FOLDER_V2 = Path(
-    r"C:\Proyectos Comodin\Origen_Destino DIAN\pdfs V2"
-)
 
-OUTPUT_DIR = Path(
-    r"C:\Proyectos Comodin\Origen_Destino DIAN\resultados"
-)
+# Mapa de nombres de meses en español a número (soporta abreviaciones comunes)
+_MESES_ES: Dict[str, int] = {
+    "ENERO": 1, "FEBRERO": 2, "MARZO": 3, "ABRIL": 4,
+    "MAYO": 5, "JUNIO": 6, "JULIO": 7, "AGOSTO": 8,
+    "SEPTIEMBRE": 9, "SETIEMBRE": 9, "OCTUBRE": 10,
+    "NOVIEMBRE": 11, "DICIEMBRE": 12,
+}
 
-SWIFT_MANUALES = OUTPUT_DIR / "Swift_manuales.xlsx"   # SOLO INCOMPLETOS (reemplaza)
-SWIFT_COMPLETOS = OUTPUT_DIR / "Swift_completos.xlsx" # SOLO COMPLETOS (reemplaza)
+def _parse_mes_carpeta(nombre: str) -> Optional[int]:
+    """
+    Extrae el número de mes de una carpeta de mes.
+    Ejemplos:
+      "3. MARZO"      → 3
+      "11. NOVIEMBRE" → 11
+      "3.MARZO"       → 3   (sin espacio)
+    Retorna None si no reconoce el formato.
+    """
+    nombre = nombre.strip().upper()
+    for mes_nombre, mes_num in _MESES_ES.items():
+        if mes_nombre in nombre:
+            return mes_num
+    return None
 
-# BD Proveedores
-BD_PROVEEDORES = Path(
-    r"C:\Users\johangc\Desktop\Desarrollo\Origen_Destino DIAN\Dbs\Bd Proveedores.xlsx"
-)
-BD_COL_NAME = "DB Nombre o razon social del beneficiario"
+def _parse_fecha_carpeta_dia(nombre: str, anio: int) -> Optional[date]:
+    """
+    Parsea la fecha de una carpeta de día.
+    Ejemplos:
+      "19 MARZO"      → date(2025, 3, 19)
+      "1 ABRIL"       → date(2025, 4, 1)
+      "20 NOVIEMBRE"  → date(2025, 11, 20)
+    Retorna None si no reconoce el formato.
+    """
+    import re as _re
+    nombre = nombre.strip().upper()
+    # Patrón: uno o dos dígitos seguidos de nombre de mes
+    m = _re.match(r"^(\d{1,2})\s+([A-ZÁÉÍÓÚÑ]+)$", nombre)
+    if not m:
+        return None
+    dia_str, mes_str = m.group(1), m.group(2)
+    mes_num = _MESES_ES.get(mes_str)
+    if not mes_num:
+        return None
+    try:
+        return date(anio, mes_num, int(dia_str))
+    except ValueError:
+        return None
 
-# BD Swift
-BD_SWIFT = Path(
-    r"C:\Users\johangc\Desktop\Desarrollo\Origen_Destino DIAN\Dbs\Bd Swift.xlsx"
-)
-BD_SWIFT_CODE_COL = "CODIGO DE LOS SWIFT"
-BD_SWIFT_PAIS_COL = "PAIS"
-BD_SWIFT_CIUDAD_COL = "CIUDAD"
+def _descubrir_pdfs_por_version(raiz: Path, corte_v2: date, anio: int, fecha_desde: Optional[date] = None,) -> tuple:
+    """
+    Recorre DIR_SWIFT_RAIZ buscando PDFs en subcarpetas mes/día y los clasifica
+    en V1 (antes de corte_v2) o V2 (desde corte_v2 inclusive).
 
-DEBUG = False
-FUZZY_THRESHOLD = 85
+    Estructura esperada:
+        raiz/
+          3. MARZO/
+            19 MARZO/  *.pdf
+            20 MARZO/  *.pdf
+          11. NOVIEMBRE/
+            19 NOVIEMBRE/  *.pdf   ← V1 (< 20-nov)
+            20 NOVIEMBRE/  *.pdf   ← V2 (>= 20-nov)
+
+    fecha_desde: si se indica, ignora carpetas con fecha anterior a ese día.
+                 Permite arrancar desde abril 2025 sin procesar meses anteriores.
+
+    Retorna (pdfs_v1: List[Path], pdfs_v2: List[Path]).
+    Ordena cada lista por fecha de carpeta y luego por nombre de archivo.
+    """
+    if not raiz.exists():
+        LOGGER.warning(
+            f"DIR_SWIFT_RAIZ no existe o no es accesible: {raiz}\n"
+            "Se usarán las carpetas locales DIR_PDFS_V1 / DIR_PDFS_V2 como fallback."
+        )
+        return [], []
+
+    pdfs_v1: List[tuple] = []   # (fecha, path)
+    pdfs_v2: List[tuple] = []
+
+    sin_fecha: List[Path] = []
+    carpetas_dia_totales = 0
+
+    # Nivel 1: carpetas de mes
+    for carpeta_mes in sorted(raiz.iterdir()):
+        if not carpeta_mes.is_dir():
+            continue
+        mes_num = _parse_mes_carpeta(carpeta_mes.name)
+        if mes_num is None:
+            LOGGER.debug(f"Carpeta de mes no reconocida, se omite: {carpeta_mes.name}")
+            continue
+
+        # Nivel 2: carpetas de día
+        for carpeta_dia in sorted(carpeta_mes.iterdir()):
+            if not carpeta_dia.is_dir():
+                continue
+
+            fecha = _parse_fecha_carpeta_dia(carpeta_dia.name, anio)
+            if fecha is None:
+                LOGGER.debug(f"Carpeta de día no reconocida, se omite: {carpeta_dia.name}")
+                continue
+
+            # Ignorar carpetas anteriores a fecha_desde
+            if fecha_desde is not None and fecha < fecha_desde:
+                LOGGER.debug(f"Carpeta omitida (anterior a fecha_desde): {carpeta_dia.name}")
+                continue
+
+            carpetas_dia_totales += 1
+            pdfs = sorted(carpeta_dia.glob("*.pdf"))
+
+            if not pdfs:
+                continue
+
+            for pdf in pdfs:
+                if fecha < corte_v2:
+                    pdfs_v1.append((fecha, pdf))
+                else:
+                    pdfs_v2.append((fecha, pdf))
+
+    # Ordenar por fecha y luego por nombre
+    pdfs_v1_sorted = [p for _, p in sorted(pdfs_v1, key=lambda x: (x[0], x[1].name))]
+    pdfs_v2_sorted = [p for _, p in sorted(pdfs_v2, key=lambda x: (x[0], x[1].name))]
+
+    LOGGER.info(
+        f"Descubrimiento PDF en red → "
+        f"carpetas_día={carpetas_dia_totales} | "
+        f"V1={len(pdfs_v1_sorted)} | V2={len(pdfs_v2_sorted)}"
+    )
+    if sin_fecha:
+        LOGGER.warning(f"Carpetas no parseadas ({len(sin_fecha)}): {[p.name for p in sin_fecha[:5]]}")
+
+    return pdfs_v1_sorted, pdfs_v2_sorted
 
 
 # =========================================================
-# LOGGING
-# =========================================================
-LOGGER = logging.getLogger("pipeline_origen_destino_dian")
-LOGGER.setLevel(logging.INFO)
-
-if not LOGGER.handlers:
-    handler = logging.StreamHandler()
-    handler.setLevel(logging.INFO)
-    formatter = logging.Formatter("[%(levelname)s] %(message)s")
-    handler.setFormatter(formatter)
-    LOGGER.addHandler(handler)
-
-
-# =========================================================
-# UTILIDADES: NORMALIZACIÓN (Proveedor)
+# TOKENS A IGNORAR EN FUZZY MATCHING DE PROVEEDORES
 # =========================================================
 LEGAL_TOKENS = {
     "SA", "SAS", "S.A", "S.A.S", "S A", "S A S",
     "LTDA", "LTD", "LTD.", "LIMITED",
     "CO", "CO.", "COMPANY",
     "INC", "INC.", "CORP", "CORPORATION",
-    "LLC",
-    "SPA", "S.P.A",
-    "GMBH", "BV", "B.V",
-    "SRL", "S.R.L",
-    "AG", "NV"
+    "LLC", "SPA", "S.P.A",
+    "GMBH", "BV", "B.V", "SRL", "S.R.L", "AG", "NV",
 }
 
-COUNTRY_TOKENS = {"CHINA", "TURKEY", "COLOMBIA", "PANAMA", "US", "USA", "ESPANA", "SPAIN"}
+COUNTRY_TOKENS = {
+    "CHINA", "TURKEY", "COLOMBIA", "PANAMA",
+    "US", "USA", "ESPANA", "SPAIN",
+}
 
 
-def strip_accents(s: str) -> str:
-    s = unicodedata.normalize("NFKD", s)
-    return "".join(c for c in s if not unicodedata.combining(c))
+# =========================================================
+# NORMALIZACIÓN DE NOMBRES DE PROVEEDORES
+# =========================================================
+def _strip_accents(s: str) -> str:
+    nfkd = unicodedata.normalize("NFKD", s)
+    return "".join(c for c in nfkd if not unicodedata.combining(c))
 
-
-def normalize_name(s: str) -> str:
-    """Normaliza nombres para fuzzy matching."""
-    if s is None:
+def _normalize_name(s: str) -> str:
+    """
+    Normaliza nombres de proveedores para fuzzy matching:
+    elimina tildes, signos, tokens legales y de país.
+    """
+    if not s:
         return ""
     s = str(s).strip()
     if not s:
         return ""
 
-    s = strip_accents(s).upper()
+    s = _strip_accents(s).upper()
     s = re.sub(r"[^A-Z0-9\s]", " ", s)
     s = re.sub(r"\s+", " ", s).strip()
 
-    tokens = []
-    for t in s.split():
-        if t in LEGAL_TOKENS:
-            continue
-        if t in COUNTRY_TOKENS:
-            continue
-        tokens.append(t)
-
+    tokens = [
+        t for t in s.split()
+        if t not in LEGAL_TOKENS and t not in COUNTRY_TOKENS
+    ]
     return " ".join(tokens).strip() or s
 
-
-def get_best_match(query: str, choices_norm: List[str], choices_raw: List[str]) -> Tuple[Optional[str], int]:
-    """Devuelve (mejor_match_raw, score_0_100)."""
-    qn = normalize_name(query)
-    if not qn:
+def _get_best_match(query: str, choices_norm: List[str], choices_raw: List[str],) -> Tuple[Optional[str], int]:
+    """
+    Retorna (mejor_candidato_raw, score 0-100).
+    Usa rapidfuzz si está disponible, difflib como fallback.
+    """
+    q_norm = _normalize_name(query)
+    if not q_norm:
         return None, 0
 
     try:
-        from rapidfuzz import process, fuzz  # type: ignore
-        res = process.extractOne(qn, choices_norm, scorer=fuzz.token_set_ratio)
+        from rapidfuzz import process, fuzz
+        res = process.extractOne(q_norm, choices_norm, scorer=fuzz.token_set_ratio)
         if not res:
             return None, 0
         _, score, idx = res
         return choices_raw[idx], int(score)
-    except Exception:
-        import difflib
 
+    except ImportError:
+        import difflib
         best_score = 0
-        best_idx = None
+        best_idx   = None
         for i, cn in enumerate(choices_norm):
-            score = int(difflib.SequenceMatcher(None, qn, cn).ratio() * 100)
+            score = int(difflib.SequenceMatcher(None, q_norm, cn).ratio() * 100)
             if score > best_score:
                 best_score = score
-                best_idx = i
-
+                best_idx   = i
         if best_idx is None:
             return None, 0
         return choices_raw[best_idx], best_score
 
 
 # =========================================================
-# RESULTADOS -> DATAFRAME
+# RESULTADOS OCR → DATAFRAME
 # =========================================================
-def results_to_df(results: List[Dict], version_name: str) -> pd.DataFrame:
+def _results_to_df(results: List[Dict], version_name: str) -> pd.DataFrame:
+    """Convierte la lista de dicts de extracción OCR a DataFrame."""
     rows = []
     for r in results:
-        receiver = r.get("receiver")
-        date_ = r.get("date")
-        amount_ = r.get("amount")
+        receiver  = r.get("receiver")
+        date_     = r.get("date")
+        amount_   = r.get("amount")
         proveedor = r.get("beneficiary")
 
         estado = "Completo" if (receiver and date_ and amount_ and proveedor) else "Incompleto"
 
         rows.append({
             "Nombre archivo": r.get("file_name"),
-            "Receiver": receiver,
-            "Date": date_,
-            "Amount": amount_,
-            "Proveedor": proveedor,
-            "Estado": estado,
-            "Version": version_name,
+            "Receiver":       receiver,
+            "Date":           date_,
+            "Amount":         amount_,
+            "Proveedor":      proveedor,
+            "Estado":         estado,
+            "Version":        version_name,
         })
 
     return pd.DataFrame(rows, columns=[
-        "Nombre archivo", "Receiver", "Date", "Amount", "Proveedor", "Estado", "Version"
+        "Nombre archivo", "Receiver", "Date", "Amount",
+        "Proveedor", "Estado", "Version",
     ])
 
 
 # =========================================================
-# ENRIQUECIMIENTC: PROVEEDOR (Bd Proveedores)
+# ENRIQUECIMIENTO 1: PROVEEDOR (fuzzy contra Bd Proveedores)
 # =========================================================
-def enrich_proveedor_with_bd(df: pd.DataFrame, bd_path: Path, threshold: int = 85) -> pd.DataFrame:
+def _enrich_proveedor(df: pd.DataFrame, bd_path: Path, threshold: int = config.FUZZY_THRESHOLD,) -> pd.DataFrame:
+    """
+    Reemplaza el Proveedor extraído por OCR con el nombre canónico
+    de la Bd Proveedores si el score fuzzy supera el threshold.
+    """
     if not bd_path.exists():
-        raise FileNotFoundError(f"No existe Bd Proveedores: {bd_path}")
+        LOGGER.warning(f"Bd Proveedores no encontrada: {bd_path}. Se omite enriquecimiento.")
+        return df
 
     bd = pd.read_excel(bd_path)
     bd.columns = [str(c).strip() for c in bd.columns]
 
-    if BD_COL_NAME not in bd.columns:
-        raise KeyError(f"No se encontró la columna '{BD_COL_NAME}' en {bd_path.name}")
+    if config.BD_PROV_COL_NOMBRE not in bd.columns:
+        raise KeyError(
+            f"No se encontró columna '{config.BD_PROV_COL_NOMBRE}' en {bd_path.name}. "
+            f"Columnas disponibles: {list(bd.columns)}"
+        )
 
-    choices_raw = (
-        bd[BD_COL_NAME]
+    choices_raw: List[str] = (
+        bd[config.BD_PROV_COL_NOMBRE]
         .dropna()
         .astype(str)
-        .map(lambda x: x.strip())
+        .str.strip()
         .loc[lambda s: s != ""]
         .drop_duplicates()
         .tolist()
     )
-    choices_norm = [normalize_name(x) for x in choices_raw]
+    choices_norm = [_normalize_name(x) for x in choices_raw]
 
     if not choices_raw:
         LOGGER.warning("Bd Proveedores sin candidatos válidos. Se omite enriquecimiento.")
         return df
 
-    updated = df.copy()
+    out      = df.copy()
     replaced = 0
     reviewed = 0
 
-    for idx, prov in updated["Proveedor"].items():
-        if prov is None or str(prov).strip() == "":
+    for idx, prov in out["Proveedor"].items():
+        if not prov or str(prov).strip() == "":
             continue
 
         reviewed += 1
-        best, score = get_best_match(str(prov), choices_norm, choices_raw)
+        best, score = _get_best_match(str(prov), choices_norm, choices_raw)
 
         if best and score >= threshold and best != prov:
-            updated.at[idx, "Proveedor"] = best
+            out.at[idx, "Proveedor"] = best
             replaced += 1
 
-        if DEBUG and reviewed <= 10:
-            LOGGER.info(f"[DEBUG] '{prov}' -> '{best}' | score={score}")
+        if config.DEBUG and reviewed <= 10:
+            LOGGER.debug(f"Fuzzy: '{prov}' → '{best}' | score={score}")
 
-    LOGGER.info(f"Enriquecimiento Proveedor: revisados={reviewed} | reemplazados={replaced} | threshold={threshold}")
-    return updated
+    LOGGER.info(
+        f"Enriquecimiento Proveedor: revisados={reviewed} | "
+        f"reemplazados={replaced} | threshold={threshold}"
+    )
+    return out
 
 
 # =========================================================
-# ENRIQUECIMIENTO: SWIFT -> PAÍS / CIUDAD
+# ENRIQUECIMIENTO 2: PAIS / CIUDAD (cruce con Bd Swift)
 # =========================================================
-def normalize_swift_11(code: str) -> str:
-    if code is None:
-        return ""
-    c = str(code).upper().replace("\u00A0", " ").strip()  # NBSP guard
-    c = re.sub(r"[^A-Z0-9]", "", c)
-    if not c:
-        return ""
-    if len(c) < 11:
-        c = c + ("X" * (11 - len(c)))
-    elif len(c) > 11:
-        c = c[:11]
-    return c
-
-
-def read_bd_swift_auto(path: Path) -> pd.DataFrame:
+def _read_bd_swift(path: Path) -> pd.DataFrame:
+    """Lee la Bd Swift detectando automáticamente la hoja correcta."""
     if not path.exists():
         raise FileNotFoundError(f"No existe Bd Swift: {path}")
 
-    xls = pd.ExcelFile(path)
-    needed = {BD_SWIFT_CODE_COL, BD_SWIFT_PAIS_COL, BD_SWIFT_CIUDAD_COL}
+    needed = {
+        config.BD_SWIFT_COL_CODIGO,
+        config.BD_SWIFT_COL_PAIS,
+        config.BD_SWIFT_COL_CIUDAD,
+    }
 
+    xls = pd.ExcelFile(path)
     for sh in xls.sheet_names:
         df = pd.read_excel(path, sheet_name=sh)
         df.columns = [str(c).strip() for c in df.columns]
@@ -267,104 +377,77 @@ def read_bd_swift_auto(path: Path) -> pd.DataFrame:
             return df
 
     raise KeyError(
-        f"No se encontró una hoja con columnas: {BD_SWIFT_CODE_COL}, {BD_SWIFT_PAIS_COL}, {BD_SWIFT_CIUDAD_COL}"
+        f"No se encontró hoja con columnas requeridas: {needed}. "
+        f"Hojas disponibles: {xls.sheet_names}"
     )
 
+def _build_bd_swift_norm(bd_swift_path: Path) -> pd.DataFrame:
+    """Construye tabla normalizada de SWIFT → País / Ciudad."""
+    bd = _read_bd_swift(bd_swift_path)
 
-def build_bd_swift_normalized(bd_swift_path: Path) -> pd.DataFrame:
-    bd = read_bd_swift_auto(bd_swift_path)
+    out = bd[[
+        config.BD_SWIFT_COL_CODIGO,
+        config.BD_SWIFT_COL_PAIS,
+        config.BD_SWIFT_COL_CIUDAD,
+    ]].copy()
 
-    out = bd[[BD_SWIFT_CODE_COL, BD_SWIFT_PAIS_COL, BD_SWIFT_CIUDAD_COL]].copy()
-    out.rename(columns={BD_SWIFT_CODE_COL: "swift_original"}, inplace=True)
-
+    out.rename(columns={config.BD_SWIFT_COL_CODIGO: "swift_original"}, inplace=True)
     out["swift_norm"] = out["swift_original"].apply(normalize_swift_11)
     out = out.loc[out["swift_norm"] != ""].copy()
     out = out.drop_duplicates(subset=["swift_norm"], keep="first")
 
     return out
 
-
-def apply_swift_country_city(df_result: pd.DataFrame, bd_swift_norm: pd.DataFrame) -> pd.DataFrame:
-    out = df_result.copy()
+def _apply_swift_country_city(df: pd.DataFrame, bd_swift_norm: pd.DataFrame,) -> pd.DataFrame:
+    """Agrega columnas Pais y Ciudad mediante merge con Bd Swift normalizada."""
+    out = df.copy()
     out["receiver_norm"] = out["Receiver"].apply(normalize_swift_11)
 
-    bd_map = bd_swift_norm[["swift_norm", BD_SWIFT_PAIS_COL, BD_SWIFT_CIUDAD_COL]].copy()
-    bd_map = bd_map.rename(columns={
-        BD_SWIFT_PAIS_COL: "__pais_bd",
-        BD_SWIFT_CIUDAD_COL: "__ciudad_bd",
+    bd_map = bd_swift_norm[[
+        "swift_norm",
+        config.BD_SWIFT_COL_PAIS,
+        config.BD_SWIFT_COL_CIUDAD,
+    ]].rename(columns={
+        config.BD_SWIFT_COL_PAIS:   "__pais_bd",
+        config.BD_SWIFT_COL_CIUDAD: "__ciudad_bd",
     })
 
-    out = out.merge(
-        bd_map,
-        how="left",
-        left_on="receiver_norm",
-        right_on="swift_norm",
+    out = out.merge(bd_map, how="left", left_on="receiver_norm", right_on="swift_norm")
+    out["Pais"]   = out["__pais_bd"]
+    out["Ciudad"] = out["__ciudad_bd"]
+    out = out.drop(
+        columns=["receiver_norm", "swift_norm", "__pais_bd", "__ciudad_bd"],
+        errors="ignore",
     )
 
-    out["Pais"] = out["__pais_bd"]
-    out["Ciudad"] = out["__ciudad_bd"]
-
-    out = out.drop(columns=["receiver_norm", "swift_norm", "__pais_bd", "__ciudad_bd"], errors="ignore")
-
     matches = out["Pais"].notna().sum()
-    LOGGER.info(f"Cruce Bd Swift aplicado: matches={matches}/{len(out)}")
+    LOGGER.info(f"Cruce Bd Swift: {matches}/{len(out)} coincidencias")
     return out
 
 
 # =========================================================
-# POST-PROCESO: NOMBRE PERSONALIZADO / MAYÚSCULAS / AMOUNT / ESTADO
+# POST-PROCESO
 # =========================================================
-def add_nombre_personalizado(df: pd.DataFrame) -> pd.DataFrame:
+def _add_nombre_personalizado(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
-    prov = out["Proveedor"].fillna("").astype(str).str.strip()
-    recv = out["Receiver"].fillna("").astype(str).str.strip()
-    out["Nombre personalizado"] = (prov + " " + recv).str.strip()
+    out["Nombre personalizado"] = out.apply(
+        lambda r: build_nombre_personalizado(r.get("Proveedor"), r.get("Receiver")),
+        axis=1,
+    )
     out.loc[out["Nombre personalizado"] == "", "Nombre personalizado"] = pd.NA
     return out
 
 
-def upper_pais_ciudad(df: pd.DataFrame) -> pd.DataFrame:
+def _upper_pais_ciudad(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
-    if "Pais" in out.columns:
-        out["Pais"] = out["Pais"].astype("string").str.strip().str.upper()
-    if "Ciudad" in out.columns:
-        out["Ciudad"] = out["Ciudad"].astype("string").str.strip().str.upper()
+    for col in ("Pais", "Ciudad"):
+        if col in out.columns:
+            out[col] = out[col].astype("string").str.strip().str.upper()
     return out
 
 
-def clean_amount_value(v) -> str:
-    if v is None or (isinstance(v, float) and pd.isna(v)):
-        return ""
-
-    s = str(v).strip()
-    if not s:
-        return ""
-
-    # quitar espacios internos (incluye NBSP y otros espacios invisibles)
-    s = s.replace("\u00A0", "").replace("\u2007", "").replace("\u202F", "")
-    s = re.sub(r"\s+", "", s)
-
-    # eliminar todo lo que no sea dígito, punto o coma
-    s = re.sub(r"[^0-9\.,]", "", s)
-
-    last_dot = s.rfind(".")
-    last_com = s.rfind(",")
-    sep_pos = max(last_dot, last_com)
-
-    if sep_pos == -1:
-        return s
-
-    dec = s[sep_pos + 1:]
-
-    if dec == "":
-        s = s + "00"
-    elif len(dec) == 1:
-        s = s + "0"
-
-    return s
-
-
-def clean_amount_column(df: pd.DataFrame) -> pd.DataFrame:
+def _clean_amount_column(df: pd.DataFrame) -> pd.DataFrame:
+    """Aplica clean_amount_value (versión mejorada de core) a toda la columna."""
     out = df.copy()
     if "Amount" in out.columns:
         out["Amount"] = out["Amount"].apply(clean_amount_value)
@@ -372,174 +455,201 @@ def clean_amount_column(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def recalc_estado(df: pd.DataFrame) -> pd.DataFrame:
+def _recalc_estado(df: pd.DataFrame) -> pd.DataFrame:
+    """Recalcula Estado con Amount ya limpio."""
+    def _is_completo(r) -> bool:
+        return all([
+            pd.notna(r.get("Receiver"))  and str(r.get("Receiver")).strip()  != "",
+            pd.notna(r.get("Date"))      and str(r.get("Date")).strip()      != "",
+            pd.notna(r.get("Amount"))    and str(r.get("Amount")).strip()    != "",
+            pd.notna(r.get("Proveedor")) and str(r.get("Proveedor")).strip() != "",
+        ])
+
     out = df.copy()
-    out["Estado"] = out.apply(
-        lambda r: "Completo"
-        if (
-            pd.notna(r.get("Receiver"))
-            and pd.notna(r.get("Date"))
-            and pd.notna(r.get("Amount"))
-            and pd.notna(r.get("Proveedor"))
-            and str(r.get("Proveedor")).strip() != ""
-        )
-        else "Incompleto",
-        axis=1,
-    )
+    out["Estado"] = out.apply(lambda r: "Completo" if _is_completo(r) else "Incompleto", axis=1)
     return out
 
 
 # =========================================================
-# ID ÚNICO (DETERMINÍSTICO Y NO REPETIBLE)
+# ID DETERMINÍSTICO
 # =========================================================
-def make_record_id(version: str, file_name: str) -> str:
+def _make_record_id(version: str, file_name: str) -> str:
     """
-    ID determinístico basado en (version + file_name).
-    - No cambia entre ejecuciones para el mismo PDF.
-    - No colisiona entre V1 y V2 aunque tengan el mismo nombre (incluye version).
+    ID uuid5 basado en (version + file_name).
+    - Estable entre ejecuciones para el mismo PDF.
+    - No colisiona entre V1 y V2 con igual nombre de archivo.
     """
     base = f"origen_destino_dian|{version}|{file_name}".strip()
     return str(uuid.uuid5(uuid.NAMESPACE_URL, base))
 
 
-def add_ids_and_tail_cols(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Agrega:
-    - id (primera columna)
-    - Formulario y Llave al final (vacías)
-    """
+def _add_ids_and_tail_cols(df: pd.DataFrame) -> pd.DataFrame:
+    """Agrega columna 'id' al inicio y columnas vacías 'Formulario' y 'Llave' al final."""
     out = df.copy()
 
-    # id determinístico
     out["id"] = out.apply(
-        lambda r: make_record_id(str(r.get("Version", "")), str(r.get("Nombre archivo", ""))),
-        axis=1
+        lambda r: _make_record_id(
+            str(r.get("Version", "")),
+            str(r.get("Nombre archivo", "")),
+        ),
+        axis=1,
     )
-
-    # columnas finales vacías
     out["Formulario"] = pd.NA
-    out["Llave"] = pd.NA
+    out["Llave"]      = pd.NA
 
-    # reorden: id al inicio
-    cols = list(out.columns)
-    cols.remove("id")
-    cols = ["id"] + cols
-    out = out[cols]
-
-    return out
+    # id al inicio
+    cols = ["id"] + [c for c in out.columns if c != "id"]
+    return out[cols]
 
 
 # =========================================================
-# EXPORT EXCEL (V1 y V2)
+# EXPORT EXCEL
 # =========================================================
-FINAL_COLUMNS_ORDER = [
-    "id",
-    "Nombre archivo",
-    "Receiver",
-    "Date",
-    "Amount",
-    "Proveedor",
-    "Pais",
-    "Ciudad",
-    "Nombre personalizado",
-    "Estado",
-    "Formulario",
-    "Llave",
-]
-
 def _ensure_final_columns(df: pd.DataFrame) -> pd.DataFrame:
-    out = df.copy()
-    for c in FINAL_COLUMNS_ORDER:
-        if c not in out.columns:
-            out[c] = pd.NA
-    out = out[FINAL_COLUMNS_ORDER].copy()
-    return out
+    return reorder_columns(df, config.FINAL_COLUMNS_ORDER)
 
 
-def write_swift_excel(df_v1: pd.DataFrame, df_v2: pd.DataFrame, output_path: Path) -> None:
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
+def _write_swift_excel(
+    df_v1: pd.DataFrame,
+    df_v2: pd.DataFrame,
+    output_path: Path,
+    label: str = "",
+) -> None:
     v1 = _ensure_final_columns(df_v1)
     v2 = _ensure_final_columns(df_v2)
-
-    with pd.ExcelWriter(output_path, engine="openpyxl", mode="w") as writer:
-        v1.to_excel(writer, sheet_name="V1", index=False)
-        v2.to_excel(writer, sheet_name="V2", index=False)
-
-    LOGGER.info(f"Excel generado: {output_path} (hojas: V1, V2)")
-
+    write_sheets(output_path, {config.SHEET_V1: v1, config.SHEET_V2: v2}, context=label)
 
 # =========================================================
-# MAIN
+# FUNCIÓN PRINCIPAL — llamada desde main.py
 # =========================================================
-def main() -> None:
-    LOGGER.info("=== INICIO PIPELINE ===")
+def run_pipeline_completo(cache=None, debug: bool = False,) -> Dict:
+    """
+    Ejecuta el pipeline completo de extracción y enriquecimiento.
 
-    # 1) Extracción V1
-    LOGGER.info("Ejecutando extracción V1...")
-    results_v1 = process_folder_v1(INPUT_FOLDER_V1, debug=DEBUG)
-    df_v1 = results_to_df(results_v1, version_name="V1")
+    Parámetros:
+        cache:  instancia de PdfCache (omite PDFs ya procesados si se pasa)
+        debug:  activa logs detallados de OCR y matching
 
-    # 2) Extracción V2
-    LOGGER.info("Ejecutando extracción V2...")
-    results_v2 = process_folder_v2(INPUT_FOLDER_V2, debug=DEBUG)
-    df_v2 = results_to_df(results_v2, version_name="V2")
+    Retorna dict con estadísticas para PipelineResult en main.py:
+        nuevos_v1, nuevos_v2, completos, incompletos, errores
+    """
+    LOGGER.info("=== INICIO PIPELINE EXTRACCIÓN ===")
 
-    # 3) Enriquecer Proveedor (fuzzy)
-    LOGGER.info("Enriqueciendo Proveedor con Bd Proveedores (fuzzy match)...")
-    df_v1 = enrich_proveedor_with_bd(df_v1, BD_PROVEEDORES, threshold=FUZZY_THRESHOLD)
-    df_v2 = enrich_proveedor_with_bd(df_v2, BD_PROVEEDORES, threshold=FUZZY_THRESHOLD)
+    # Validar entradas antes de empezar
+    validate_input_files(
+        config.DIR_PDFS_V1,
+        config.DIR_PDFS_V2,
+        config.BD_PROVEEDORES,
+        config.BD_SWIFT,
+        context="run_pipeline",
+    )
+    validate_output_dirs(config.DIR_RESULTADOS)
 
-    # 4) Bd Swift normalizada + cruce Pais/Ciudad
-    LOGGER.info("Construyendo Bd Swift normalizada para cruce...")
-    bd_swift_norm = build_bd_swift_normalized(BD_SWIFT)
+    stats = {
+        "nuevos_v1":   0,
+        "nuevos_v2":   0,
+        "completos":   0,
+        "incompletos": 0,
+        "errores":     0,
+    }
 
-    LOGGER.info("Aplicando cruce Swift -> Pais/Ciudad en V1...")
-    df_v1 = apply_swift_country_city(df_v1, bd_swift_norm)
+    # ── 1) Descubrir PDFs desde la red (o fallback local) ────
+    LOGGER.info("Paso 1: Descubriendo PDFs en fuente de red...")
 
-    LOGGER.info("Aplicando cruce Swift -> Pais/Ciudad en V2...")
-    df_v2 = apply_swift_country_city(df_v2, bd_swift_norm)
+    if config.DIR_SWIFT_RAIZ.exists():
+        # Fuente principal: red corporativa con estructura mes/día
+        pdfs_v1, pdfs_v2 = _descubrir_pdfs_por_version(
+            raiz=config.DIR_SWIFT_RAIZ,
+            corte_v2=config.SWIFT_CORTE_V2,
+            anio=config.SWIFT_AÑO,
+            fecha_desde=config.SWIFT_FECHA_DESDE,
+        )
+        fuente_v1 = pdfs_v1   # List[Path]
+        fuente_v2 = pdfs_v2
+    else:
+        # Fallback: carpetas locales planas (desarrollo / sin red)
+        LOGGER.warning(
+            "Red no disponible. Usando carpetas locales: "
+            f"V1={config.DIR_PDFS_V1} | V2={config.DIR_PDFS_V2}"
+        )
+        fuente_v1 = config.DIR_PDFS_V1   # Path
+        fuente_v2 = config.DIR_PDFS_V2
 
-    # 5) Nombre personalizado + Mayúsculas Pais/Ciudad + Limpieza Amount
-    df_v1 = add_nombre_personalizado(df_v1)
-    df_v2 = add_nombre_personalizado(df_v2)
+    # ── 2) Extracción OCR ──────────────────────────────────
+    LOGGER.info("Paso 1: Extracción V1...")
+    results_v1 = process_folder_v1(fuente_v1, debug=debug, cache=cache)
+    df_v1 = _results_to_df(results_v1, version_name="V1")
+    stats["nuevos_v1"] = len(results_v1)
 
-    df_v1 = upper_pais_ciudad(df_v1)
-    df_v2 = upper_pais_ciudad(df_v2)
+    LOGGER.info("Paso 1: Extracción V2...")
+    results_v2 = process_folder_v2(fuente_v2, debug=debug, cache=cache)
+    df_v2 = _results_to_df(results_v2, version_name="V2")
+    stats["nuevos_v2"] = len(results_v2)
 
-    df_v1 = clean_amount_column(df_v1)
-    df_v2 = clean_amount_column(df_v2)
+    # Si no hay PDFs nuevos en ninguna versión, salir limpiamente
+    if df_v1.empty and df_v2.empty:
+        LOGGER.info("No hay PDFs nuevos que procesar (todos en caché). Pipeline finalizado.")
+        return stats
 
-    # 6) Recalcular estado (ya con Amount limpio)
-    df_v1 = recalc_estado(df_v1)
-    df_v2 = recalc_estado(df_v2)
+    # ── 2) Enriquecimiento Proveedor (fuzzy) ───────────────
+    LOGGER.info("Paso 2: Enriquecimiento Proveedor (fuzzy)...")
+    df_v1 = _enrich_proveedor(df_v1, config.BD_PROVEEDORES, threshold=config.FUZZY_THRESHOLD)
+    df_v2 = _enrich_proveedor(df_v2, config.BD_PROVEEDORES, threshold=config.FUZZY_THRESHOLD)
 
-    # 7) Agregar id + columnas finales (Formulario, Llave)
-    df_v1 = add_ids_and_tail_cols(df_v1)
-    df_v2 = add_ids_and_tail_cols(df_v2)
+    # ── 3) Cruce Bd Swift → País / Ciudad ──────────────────
+    LOGGER.info("Paso 3: Cruce Bd Swift (País/Ciudad)...")
+    bd_swift_norm = _build_bd_swift_norm(config.BD_SWIFT)
+    df_v1 = _apply_swift_country_city(df_v1, bd_swift_norm)
+    df_v2 = _apply_swift_country_city(df_v2, bd_swift_norm)
 
-    # 8) Separar completos / incompletos
-    df_v1_completo = df_v1.loc[df_v1["Estado"] == "Completo"].copy()
-    df_v2_completo = df_v2.loc[df_v2["Estado"] == "Completo"].copy()
+    # ── 4) Post-proceso ────────────────────────────────────
+    LOGGER.info("Paso 4: Post-proceso (Nombre personalizado, mayúsculas, Amount)...")
+    for apply_fn in [_add_nombre_personalizado, _upper_pais_ciudad, _clean_amount_column]:
+        df_v1 = apply_fn(df_v1)
+        df_v2 = apply_fn(df_v2)
 
+    # ── 5) Recálculo de estado ────────────────────────────
+    df_v1 = _recalc_estado(df_v1)
+    df_v2 = _recalc_estado(df_v2)
+
+    # ── 6) IDs determinísticos + columnas finales ──────────
+    LOGGER.info("Paso 5: Generando IDs y columnas finales...")
+    df_v1 = _add_ids_and_tail_cols(df_v1)
+    df_v2 = _add_ids_and_tail_cols(df_v2)
+
+    # ── 7) Separar completos / incompletos ─────────────────
+    df_v1_comp  = df_v1.loc[df_v1["Estado"] == "Completo"].copy()
+    df_v2_comp  = df_v2.loc[df_v2["Estado"] == "Completo"].copy()
     df_v1_incomp = df_v1.loc[df_v1["Estado"] == "Incompleto"].copy()
     df_v2_incomp = df_v2.loc[df_v2["Estado"] == "Incompleto"].copy()
 
-    LOGGER.info(f"V1 -> Completo: {len(df_v1_completo)} | Incompleto: {len(df_v1_incomp)}")
-    LOGGER.info(f"V2 -> Completo: {len(df_v2_completo)} | Incompleto: {len(df_v2_incomp)}")
+    total_comp   = len(df_v1_comp)  + len(df_v2_comp)
+    total_incomp = len(df_v1_incomp) + len(df_v2_incomp)
+    total_error  = sum(1 for r in results_v1 + results_v2 if r.get("estado") == "Error")
 
-    # 9) Exportar:
-    # - Swift_completos.xlsx  (solo completos)
-    # - Swift_manuales.xlsx   (solo incompletos)
-    LOGGER.info("Generando Swift_completos (SOLO COMPLETOS)...")
-    write_swift_excel(df_v1_completo, df_v2_completo, SWIFT_COMPLETOS)
+    LOGGER.info(f"V1 → Completos: {len(df_v1_comp)} | Incompletos: {len(df_v1_incomp)}")
+    LOGGER.info(f"V2 → Completos: {len(df_v2_comp)} | Incompletos: {len(df_v2_incomp)}")
 
-    LOGGER.info("Generando Swift_manuales (SOLO INCOMPLETOS)...")
-    write_swift_excel(df_v1_incomp, df_v2_incomp, SWIFT_MANUALES)
+    # ── 8) Exportar ────────────────────────────────────────
+    LOGGER.info("Paso 6: Exportando Swift_completos y Swift_manuales...")
+    _write_swift_excel(df_v1_comp,  df_v2_comp,  config.SWIFT_COMPLETOS, label="completos")
+    _write_swift_excel(df_v1_incomp, df_v2_incomp, config.SWIFT_MANUALES,  label="manuales")
 
-    LOGGER.info("=== FIN PIPELINE ===")
+    stats["completos"]   = total_comp
+    stats["incompletos"] = total_incomp
+    stats["errores"]     = total_error
 
+    LOGGER.info(
+        f"=== FIN PIPELINE ===  "
+        f"Completos:{total_comp} | Incompletos:{total_incomp} | Errores:{total_error}"
+    )
+    return stats
 
+# =========================================================
+# MAIN — ejecución standalone
+# =========================================================
 if __name__ == "__main__":
-    main()
-    
+    from core.cache import PdfCache
+    cache = PdfCache(config.CACHE_FILE)
+    run_pipeline_completo(cache=cache, debug=config.DEBUG)
+    cache.save()

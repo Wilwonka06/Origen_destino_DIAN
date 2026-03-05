@@ -1,156 +1,104 @@
 # -*- coding: utf-8 -*-
 """
-reader_pdf_v2.py
-Extracción OCR (estructura V2) para PDFs SWIFT.
+reader_pdf_V2.py — Extracción OCR de PDFs SWIFT estructura V2
 
-Campos:
-- Receiver: "Receiver: <BIC>"
-- Date: robusto (YYYY-MM-DD o DD Mon YYYY)
-- Amount: por anclas:
-    1) "Interbank Settlement Amount:"
-    2) "Instructed Amount:"
-  (omite 'USD' y normaliza decimales)
-- Proveedor: por ancla "Creditor:"
-  (toma la PRIMERA línea con letras debajo del código, sin asumir formato del código)
+Campos extraídos:
+  - Receiver  → ancla "Receiver: <BIC>"
+  - Date      → ISO directo, ancla "Date:", DD Mon YYYY
+  - Amount    → ancla "Interbank Settlement Amount:" (fallback "Instructed Amount:")
+  - Proveedor → ancla "Creditor:" (primera línea con letras debajo del código)
 
-Salida:
-- Escribe/actualiza en el MISMO Excel, hoja "V2" (reemplaza esa hoja si existe).
+CAMBIOS vs versión anterior:
+  - Eliminado: _resolve_tesseract_cmd() duplicado → usa core.ocr_engine
+  - Eliminado: setup de logging propio            → usa core.logger
+  - Eliminado: normalize_line / normalize_text    → implementación local _normalize_line
+  - Mantenida: toda la lógica de regex y extracción (sin cambios funcionales)
+  - Agregado:  soporte de caché en process_folder_v2
+  - Agregado:  campo "estado" en el dict de retorno
 """
 
 from __future__ import annotations
 
 import re
-import logging
-from pathlib import Path
-import os
-import shutil
-from typing import Optional, Dict, List
 from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Optional
 
-import pdfplumber
-import pytesseract
-from PIL import Image
 import pandas as pd
 
+import config
+from core.logger import get_logger
+from core.ocr_engine import get_ocr_engine
 
-# =========================================================
-# CONFIGURACIÓN
-# =========================================================
-def _resolve_tesseract_cmd() -> str:
-    env_cmd = os.environ.get("TESSERACT_CMD")
-    if env_cmd and Path(env_cmd).exists():
-        return env_cmd
-    which = shutil.which("tesseract")
-    if which:
-        return which
-    candidates = [
-        r"C:\Program Files\Tesseract-OCR\tesseract.exe",
-        r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
-        os.path.join(os.environ.get("USERPROFILE", ""), r"AppData\Local\Programs\Tesseract-OCR\tesseract.exe"),
-    ]
-    for c in candidates:
-        if c and Path(c).exists():
-            return c
-    raise FileNotFoundError("No se encontró tesseract.exe. Instalar Tesseract OCR o definir TESSERACT_CMD.")
-
-pytesseract.pytesseract.tesseract_cmd = _resolve_tesseract_cmd()
-OCR_LANG = "eng"
-OCR_CONFIG = r"--oem 3 --psm 6"
-OCR_DPI = 300
+LOGGER = get_logger(__name__)
 
 
 # =========================================================
-# LOGGING
+# REGEX V2 — sin cambios respecto a versión original
 # =========================================================
-LOGGER = logging.getLogger("reader_pdf_ocr_v2")
-LOGGER.setLevel(logging.INFO)
-
-if not LOGGER.handlers:
-    handler = logging.StreamHandler()
-    handler.setLevel(logging.INFO)
-    formatter = logging.Formatter("[%(levelname)s] %(message)s")
-    handler.setFormatter(formatter)
-    LOGGER.addHandler(handler)
-
-
-# =========================================================
-# REGEX (V2)
-# =========================================================
-# Receiver: BIC 8 u 11
 RE_RECEIVER_V2 = re.compile(
-    r"\bReceiver\b\s*[:;]\s*([A-Z0-9]{8}(?:[A-Z0-9]{3})?)",
-    re.IGNORECASE
+    r"\bReceiver\b\s*[:;]\s*([A-Z0-9]{8}(?:[A-Z0-9]{3})?)\b",
+    re.IGNORECASE,
 )
 
-# Date
-RE_ISO_DATE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
-RE_DD_MON_YYYY = re.compile(r"\b(\d{1,2}\s+[A-Za-z]{3,}\s+\d{4})\b")
-RE_DATE_LINE = re.compile(r"\bDate\b\s*[:;]?\s*(.+)$", re.IGNORECASE)
+RE_ISO_DATE        = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
+RE_DD_MON_YYYY     = re.compile(r"\b(\d{1,2}\s+[A-Za-z]{3,}\s+\d{4})\b")
+RE_DATE_LINE       = re.compile(r"\bDate\b\s*[:;]?\s*(.+)$", re.IGNORECASE)
 
-# Amount (dos anclas)
-RE_IB_SETTLE_AMOUNT = re.compile(r"\bInterbank\s+Settlement\s+Amount\b\s*[:;]\s*(.+)$", re.IGNORECASE)
-RE_INSTRUCTED_AMOUNT = re.compile(r"\bInstructed\s+Amount\b\s*[:;]\s*(.+)$", re.IGNORECASE)
-
-# USD pegado o con espacio (SIN frontera final)
+RE_IB_SETTLE_AMOUNT  = re.compile(
+    r"\bInterbank\s+Settlement\s+Amount\b\s*[:;]\s*(.+)$", re.IGNORECASE
+)
+RE_INSTRUCTED_AMOUNT = re.compile(
+    r"\bInstructed\s+Amount\b\s*[:;]\s*(.+)$", re.IGNORECASE
+)
 RE_USD_NUMBER = re.compile(r"\bUSD\s*([0-9][0-9\.,]*)", re.IGNORECASE)
 
-# Creditor
-RE_CREDITOR = re.compile(r"\bCreditor\b\s*[:;]", re.IGNORECASE)
-
+RE_CREDITOR    = re.compile(r"\bCreditor\b\s*[:;]", re.IGNORECASE)
 RE_HAS_LETTERS = re.compile(r"[A-Z]", re.IGNORECASE)
-
-
-# =========================================================
-# UTILIDADES
-# =========================================================
-def normalize_line(text: str) -> str:
-    if not text:
-        return ""
-    text = text.replace("\u00A0", " ")
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
-
-
-def normalize_text(text: str) -> str:
-    if not text:
-        return ""
-    text = text.replace("\r", " ").replace("\n", " ")
-    text = text.replace("\u00A0", " ")
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()
-
 
 MONTH_FIX = {
     "JAN": "JAN",
     "FEB": "FEB", "PEB": "FEB", "FEE": "FEB",
-    "MAR": "MAR",
-    "APR": "APR",
-    "MAY": "MAY",
-    "JUN": "JUN",
-    "JUL": "JUL",
-    "AUG": "AUG",
+    "MAR": "MAR", "APR": "APR", "MAY": "MAY",
+    "JUN": "JUN", "JUL": "JUL", "AUG": "AUG",
     "SEP": "SEP", "SEPT": "SEP",
-    "OCT": "OCT",
-    "NOV": "NOV",
-    "DEC": "DEC",
+    "OCT": "OCT", "NOV": "NOV", "DEC": "DEC",
 }
 
+_COUNTRY_BLACKLIST = {"CHINA", "TURKEY", "COLOMBIA", "PANAMA", "US", "USA"}
 
-def parse_dd_mon_yyyy(raw: str) -> Optional[str]:
+
+# =========================================================
+# UTILIDADES DE TEXTO
+# =========================================================
+def _normalize_line(text: str) -> str:
+    if not text:
+        return ""
+    return re.sub(r"\s+", " ", text.replace("\u00A0", " ")).strip()
+
+
+def _normalize_text(text: str) -> str:
+    if not text:
+        return ""
+    text = text.replace("\r", " ").replace("\n", " ").replace("\u00A0", " ")
+    return re.sub(r"\s+", " ", text).strip()
+
+
+# =========================================================
+# PARSEO DE FECHAS
+# =========================================================
+def _parse_dd_mon_yyyy(raw: str) -> Optional[str]:
+    """Parsea '10 Apr 2025' a '2025-04-10', con correcciones de OCR."""
     if not raw:
         return None
-
-    s = raw.strip().replace("\u00A0", " ")
-    s = re.sub(r"\s+", " ", s).strip()
-    s_up = s.upper()
-
-    m = re.match(r"^(\d{1,2})\s+([A-Z]{3,4})\s+(\d{4})$", s_up)
+    s = re.sub(r"\s+", " ", raw.strip().replace("\u00A0", " ")).strip()
+    m = re.match(r"^(\d{1,2})\s+([A-Za-z]{3,4})\s+(\d{4})$", s)
     if not m:
         return None
-
-    d, mon, y = m.groups()
-    mon = MONTH_FIX.get(mon, mon[:3])
-
+    d, mon_raw, y = m.groups()
+    mon = MONTH_FIX.get(mon_raw.upper()[:4], MONTH_FIX.get(mon_raw.upper()[:3]))
+    if not mon:
+        return None
     try:
         dt = datetime.strptime(f"{int(d):02d} {mon} {y}", "%d %b %Y")
         return dt.strftime("%Y-%m-%d")
@@ -158,372 +106,376 @@ def parse_dd_mon_yyyy(raw: str) -> Optional[str]:
         return None
 
 
-def normalize_amount_decimals(value: str) -> str:
+# =========================================================
+# NORMALIZACIÓN DE MONTOS (V2)
+# =========================================================
+def _normalize_amount_decimals(value: str) -> str:
     """
-    - termina en '.' o ',' -> + '00'
-    - 1 dígito tras '.'/',' -> + '0'
-    - sin separador -> + '.00'
-    Preserva separadores existentes.
+    Asegura que el monto tenga exactamente 2 decimales.
+    - Termina en '.' o ','       → + '00'
+    - 1 dígito tras separador   → + '0'
+    - Sin separador              → + '.00'
+    - 2+ dígitos tras separador → sin cambio
     """
     if not value:
         return value
 
-    v = value.strip().replace("\u00A0", " ")
-    v = re.sub(r"\s+", "", v)
+    v = re.sub(r"\s+", "", value.strip().replace("\u00A0", " "))
 
     if re.search(r"[.,]$", v):
         return v + "00"
-
     if re.search(r"[.,]\d$", v):
         return v + "0"
-
     if re.search(r"[.,]\d{2,}$", v):
         return v
-
     if "." not in v and "," not in v:
         return v + ".00"
-
     return v
 
 
 # =========================================================
-# EXTRACCIÓN (V2)
+# EXTRACCIÓN DE CAMPOS V2
 # =========================================================
-def extract_receiver_v2(ocr_text: str, debug: bool = False) -> Optional[str]:
+def _extract_receiver_v2(ocr_text: str, debug: bool = False) -> Optional[str]:
     if not ocr_text:
         return None
-
-    lines = [normalize_line(ln) for ln in ocr_text.splitlines() if normalize_line(ln)]
+    lines = [_normalize_line(ln) for ln in ocr_text.splitlines() if _normalize_line(ln)]
     for ln in lines:
         m = RE_RECEIVER_V2.search(ln)
         if m:
             receiver = m.group(1).upper().strip()
             if debug:
-                LOGGER.info(f"[DEBUG V2] Receiver: {repr(ln)} -> {receiver}")
+                LOGGER.debug(f"[V2] Receiver: {repr(ln)} → {receiver}")
             return receiver
     return None
 
 
-def extract_date_v2(ocr_text: str, debug: bool = False) -> Optional[str]:
+def _extract_date_v2(ocr_text: str, debug: bool = False) -> Optional[str]:
     if not ocr_text:
         return None
+    lines = [_normalize_line(ln) for ln in ocr_text.splitlines() if _normalize_line(ln)]
 
-    lines = [normalize_line(ln) for ln in ocr_text.splitlines() if normalize_line(ln)]
-
-    # ISO directo
+    # 1) ISO directo en cualquier línea
     for ln in lines:
         m = RE_ISO_DATE.search(ln)
         if m:
-            iso = m.group(1)
             try:
-                dt = datetime.strptime(iso, "%Y-%m-%d")
+                dt = datetime.strptime(m.group(1), "%Y-%m-%d")
                 return dt.strftime("%Y-%m-%d")
             except ValueError:
                 pass
 
-    # Línea con Date ...
+    # 2) Línea con "Date ..."
     for ln in lines:
         m = RE_DATE_LINE.search(ln)
         if m:
             tail = m.group(1).strip()
-
+            # ISO dentro de la línea Date
             m2 = RE_ISO_DATE.search(tail)
             if m2:
-                iso = m2.group(1)
                 try:
-                    dt = datetime.strptime(iso, "%Y-%m-%d")
+                    dt = datetime.strptime(m2.group(1), "%Y-%m-%d")
                     return dt.strftime("%Y-%m-%d")
                 except ValueError:
                     pass
-
+            # DD Mon YYYY dentro de la línea Date
             m3 = RE_DD_MON_YYYY.search(tail)
             if m3:
-                parsed = parse_dd_mon_yyyy(m3.group(1))
+                parsed = _parse_dd_mon_yyyy(m3.group(1))
                 if debug:
-                    LOGGER.info(f"[DEBUG V2] Date candidato: {repr(m3.group(1))} -> {parsed}")
+                    LOGGER.debug(f"[V2] Date candidato: {repr(m3.group(1))} → {parsed}")
                 if parsed:
                     return parsed
 
-    # DD Mon YYYY en cualquier línea
+    # 3) DD Mon YYYY en cualquier línea
     for ln in lines:
         m = RE_DD_MON_YYYY.search(ln)
         if m:
-            parsed = parse_dd_mon_yyyy(m.group(1))
+            parsed = _parse_dd_mon_yyyy(m.group(1))
             if debug:
-                LOGGER.info(f"[DEBUG V2] Date candidato: {repr(m.group(1))} -> {parsed}")
+                LOGGER.debug(f"[V2] Date candidato: {repr(m.group(1))} → {parsed}")
             if parsed:
                 return parsed
 
     return None
 
 
-def extract_amount_v2(ocr_text: str, debug: bool = False) -> Optional[str]:
+def _extract_amount_v2(ocr_text: str, debug: bool = False) -> Optional[str]:
     if not ocr_text:
         return None
+    lines = [_normalize_line(ln) for ln in ocr_text.splitlines() if _normalize_line(ln)]
 
-    lines = [normalize_line(ln) for ln in ocr_text.splitlines() if normalize_line(ln)]
-
-    def parse_tail(tail: str) -> Optional[str]:
+    def _parse_tail(tail: str) -> Optional[str]:
         if not tail:
             return None
-
         t = tail.replace("\u00A0", " ").strip()
 
+        # USD + número
         m = RE_USD_NUMBER.search(t)
         if m:
             raw_num = m.group(1)
-            fixed = normalize_amount_decimals(raw_num)
+            fixed = _normalize_amount_decimals(raw_num)
             if debug:
-                LOGGER.info(f"[DEBUG V2] Amount USD raw: {raw_num} -> fixed: {fixed}")
+                LOGGER.debug(f"[V2] Amount USD raw:{raw_num} → {fixed}")
             return fixed
 
-        # fallback: primer número plausible
+        # Primer número plausible
         m2 = re.search(r"([0-9][0-9\.,]*)", t)
         if m2:
             raw_num = m2.group(1)
-            fixed = normalize_amount_decimals(raw_num)
+            fixed = _normalize_amount_decimals(raw_num)
             if debug:
-                LOGGER.info(f"[DEBUG V2] Amount num raw: {raw_num} -> fixed: {fixed}")
+                LOGGER.debug(f"[V2] Amount num raw:{raw_num} → {fixed}")
             return fixed
 
         return None
 
-    # 1) Interbank Settlement Amount
+    # Ancla 1: Interbank Settlement Amount
     for ln in lines:
         m = RE_IB_SETTLE_AMOUNT.search(ln)
         if m:
-            got = parse_tail(m.group(1))
+            got = _parse_tail(m.group(1))
             if debug:
-                LOGGER.info(f"[DEBUG V2] Interbank line: {repr(ln)} -> {got}")
+                LOGGER.debug(f"[V2] Interbank line: {repr(ln)} → {got}")
             if got:
                 return got
 
-    # 2) Instructed Amount (fallback)
+    # Ancla 2: Instructed Amount (fallback)
     for ln in lines:
         m = RE_INSTRUCTED_AMOUNT.search(ln)
         if m:
-            got = parse_tail(m.group(1))
+            got = _parse_tail(m.group(1))
             if debug:
-                LOGGER.info(f"[DEBUG V2] Instructed line: {repr(ln)} -> {got}")
+                LOGGER.debug(f"[V2] Instructed line: {repr(ln)} → {got}")
             if got:
                 return got
 
     return None
 
 
-def extract_supplier_from_creditor_v2(ocr_text: str, debug: bool = False) -> Optional[str]:
+def _extract_supplier_from_creditor_v2(ocr_text: str, debug: bool = False) -> Optional[str]:
     """
-    Proveedor V2 desde bloque 'Creditor:'
-    Regla robusta (sin asumir formato del código):
-      - Ubicar línea con 'Creditor:'
-      - Considerar esa línea y siguientes como bloque
-      - El "código" es el primer token a la derecha de ':' (si existe)
-        (puede ser numérico, alfanumérico, largo o corto)
-      - Proveedor = primera línea NO VACÍA con letras debajo del código
-      - Fallback: si no se puede detectar el código, tomar la primera línea con letras
-        debajo de 'Creditor:' ignorando vacíos.
+    Busca el proveedor debajo de la ancla 'Creditor:'.
+
+    Estrategia robusta (sin asumir formato del código):
+      1. Localizar línea con 'Creditor:'
+      2. Detectar si el código está en la misma línea (a la derecha del ':')
+      3. Si no, asumir que el código está en la siguiente línea
+      4. Proveedor = primera línea con letras después del código
+      5. Fallback: primera línea con letras debajo de 'Creditor:'
     """
     if not ocr_text:
         return None
 
-    lines = [normalize_line(ln) for ln in ocr_text.splitlines() if normalize_line(ln)]
+    lines     = [_normalize_line(ln) for ln in ocr_text.splitlines() if _normalize_line(ln)]
 
     for i, ln in enumerate(lines):
-        if RE_CREDITOR.search(ln):
-            window = lines[i:i + 12]
+        if not RE_CREDITOR.search(ln):
+            continue
+
+        window = lines[i: i + 12]
+        if debug:
+            LOGGER.debug(f"[V2] Creditor window: {window}")
+
+        # ¿Hay código en la misma línea?
+        code_found = False
+        start_idx  = 1   # por defecto: proveedor desde window[1]
+
+        parts = re.split(r"[:;]", ln, maxsplit=1)
+        if len(parts) == 2:
+            right = parts[1].strip()
+            code_token = right.split(" ")[0].strip() if right else ""
+            if code_token:
+                code_found = True
+
+        if not code_found and len(window) >= 2:
+            # El código es la siguiente línea; proveedor desde window[2]
+            start_idx = 2
             if debug:
-                LOGGER.info(f"[DEBUG V2] Creditor window: {window}")
+                LOGGER.debug(f"[V2] Code asumido en línea siguiente: {window[1]}")
 
-            # Intento 1: detectar si el código está en la misma línea, a la derecha de ':'
-            code_found = False
-            parts = re.split(r"[:;]", ln, maxsplit=1)
-            if len(parts) == 2:
-                right = parts[1].strip()
-                # token "código" = primer grupo no vacío (sin asumir longitud ni tipo)
-                code_token = right.split(" ")[0].strip() if right else ""
-                if code_token:
-                    code_found = True
+        # Buscar proveedor
+        for cand in window[start_idx:]:
+            c = cand.strip()
+            if not c:
+                continue
+            if not RE_HAS_LETTERS.search(c):
+                continue
+            if c.upper() in _COUNTRY_BLACKLIST:
+                continue
+            if debug:
+                LOGGER.debug(f"[V2] Proveedor capturado: {repr(c)}")
+            return c
+
+        # Fallback final: primera línea con letras desde window[1]
+        for cand in window[1:]:
+            c = cand.strip()
+            if c and RE_HAS_LETTERS.search(c):
+                if c.upper() not in _COUNTRY_BLACKLIST:
                     if debug:
-                        LOGGER.info(f"[DEBUG V2] Code token en misma línea: {code_token}")
-
-            # Intento 2: si no hay token en misma línea, asumir que el código está en la siguiente línea
-            # (no validamos estructura del código; solo tomamos la siguiente línea como "línea código" si existe)
-            start_idx_for_supplier = 1  # por defecto: buscar proveedor en window[1:]
-            if not code_found:
-                # Si existe una línea siguiente, tratamos esa como línea código
-                if len(window) >= 2:
-                    start_idx_for_supplier = 2  # proveedor debajo del código (window[2] en adelante)
-                    if debug:
-                        LOGGER.info(f"[DEBUG V2] Code assumed en línea siguiente: {window[1]}")
-                else:
-                    start_idx_for_supplier = 1
-
-            # Buscar proveedor: primera línea con letras después del "código"
-            for cand in window[start_idx_for_supplier:]:
-                c = cand.strip()
-                if not c:
-                    continue
-                if not RE_HAS_LETTERS.search(c):
-                    continue
-                if c.upper() in {"CHINA", "TURKEY", "COLOMBIA", "PANAMA", "US", "USA"}:
-                    continue
-
-                if debug:
-                    LOGGER.info(f"[DEBUG V2] Proveedor capturado: {repr(c)}")
-                return c
-
-            # Fallback extra: si todo falló, intenta primera línea con letras debajo de Creditor:
-            for cand in window[1:]:
-                c = cand.strip()
-                if c and RE_HAS_LETTERS.search(c):
-                    if c.upper() not in {"CHINA", "TURKEY", "COLOMBIA", "PANAMA", "US", "USA"}:
-                        if debug:
-                            LOGGER.info(f"[DEBUG V2] Proveedor fallback capturado: {repr(c)}")
-                        return c
+                        LOGGER.debug(f"[V2] Proveedor fallback: {repr(c)}")
+                    return c
 
     return None
 
 
 # =========================================================
-# OCR POR PÁGINA
+# PROCESAMIENTO DE UN SOLO PDF
 # =========================================================
-def ocr_page_image(page, dpi: int = OCR_DPI) -> str:
-    pil_img: Image.Image = page.to_image(resolution=dpi).original
-    return pytesseract.image_to_string(pil_img, lang=OCR_LANG, config=OCR_CONFIG) or ""
+def extract_data_from_pdf_v2(pdf_path: Path, debug: bool = False) -> Dict:
+    """
+    Extrae los 4 campos SWIFT de un PDF con estructura V2.
 
+    Retorna dict con:
+        file_name, file_path, receiver, date, amount, beneficiary,
+        pages_scanned, estado ("Completo" | "Incompleto" | "Error")
+    """
+    ocr = get_ocr_engine()
+    resultado_base = {
+        "file_name":     pdf_path.name,
+        "file_path":     str(pdf_path),
+        "receiver":      None,
+        "date":          None,
+        "amount":        None,
+        "beneficiary":   None,
+        "pages_scanned": 0,
+        "estado":        "Error",
+    }
 
-def extract_data_from_pdf_v2(pdf_path: Path, debug: bool = False) -> Dict[str, Optional[str]]:
     try:
+        pages_text = ocr.extract_text_from_pdf(pdf_path, debug=debug)
         receiver: Optional[str] = None
-        date_: Optional[str] = None
-        amount: Optional[str] = None
+        date_:    Optional[str] = None
+        amount:   Optional[str] = None
         supplier: Optional[str] = None
-        pages_scanned = 0
 
-        with pdfplumber.open(str(pdf_path)) as pdf:
-            total_pages = len(pdf.pages)
+        for i, ocr_text in enumerate(pages_text, start=1):
+            resultado_base["pages_scanned"] = i
 
-            for i, page in enumerate(pdf.pages, start=1):
-                pages_scanned += 1
-                ocr_text = ocr_page_image(page, dpi=OCR_DPI)
+            if not receiver:
+                receiver = _extract_receiver_v2(ocr_text, debug=debug)
+            if not date_:
+                date_ = _extract_date_v2(ocr_text, debug=debug)
+            if not amount:
+                amount = _extract_amount_v2(ocr_text, debug=debug)
+            if not supplier:
+                supplier = _extract_supplier_from_creditor_v2(ocr_text, debug=debug)
 
-                if debug:
-                    sample = normalize_text(ocr_text)[:320]
-                    LOGGER.info(f"[DEBUG] {pdf_path.name} | pág {i}/{total_pages} | sample: {repr(sample)}")
+            if receiver and date_ and amount and supplier:
+                LOGGER.info(
+                    f"[V2] {pdf_path.name} (pág {i}) → "
+                    f"Receiver:{receiver} | Date:{date_} | "
+                    f"Amount:{amount} | Proveedor:{supplier}"
+                )
+                break
 
-                if not receiver:
-                    receiver = extract_receiver_v2(ocr_text, debug=debug)
+        estado = "Completo" if (receiver and date_ and amount and supplier) else "Incompleto"
 
-                if not date_:
-                    date_ = extract_date_v2(ocr_text, debug=debug)
-
-                if not amount:
-                    amount = extract_amount_v2(ocr_text, debug=debug)
-
-                if not supplier:
-                    supplier = extract_supplier_from_creditor_v2(ocr_text, debug=debug)
-
-                if receiver and date_ and amount and supplier:
-                    LOGGER.info(
-                        f"Datos completos en {pdf_path.name} (pág {i}) -> "
-                        f"Receiver: {receiver} | Date: {date_} | Amount: {amount} | Proveedor: {supplier}"
-                    )
-                    break
-
-        if not receiver:
-            LOGGER.warning(f"No se encontró Receiver (V2) en: {pdf_path.name}")
-        if not date_:
-            LOGGER.warning(f"No se encontró Date (V2) en: {pdf_path.name}")
-        if not amount:
-            LOGGER.warning(f"No se encontró Amount (V2) en: {pdf_path.name}")
-        if not supplier:
-            LOGGER.warning(f"No se encontró Proveedor (Creditor) (V2) en: {pdf_path.name}")
+        if estado == "Incompleto":
+            campos_faltantes = [
+                f for f, v in [
+                    ("Receiver", receiver), ("Date", date_),
+                    ("Amount", amount), ("Proveedor", supplier)
+                ] if not v
+            ]
+            LOGGER.warning(f"[V2] {pdf_path.name} → Incompleto. Falta: {campos_faltantes}")
 
         return {
-            "file_name": pdf_path.name,
-            "file_path": str(pdf_path),
-            "receiver": receiver,
-            "date": date_,
-            "amount": amount,
+            **resultado_base,
+            "receiver":    receiver,
+            "date":        date_,
+            "amount":      amount,
             "beneficiary": supplier,
-            "pages_scanned": pages_scanned
+            "estado":      estado,
         }
 
     except Exception as e:
-        LOGGER.error(f"Error procesando {pdf_path.name}: {e}")
-        return {
-            "file_name": pdf_path.name,
-            "file_path": str(pdf_path),
-            "receiver": None,
-            "date": None,
-            "amount": None,
-            "beneficiary": None,
-            "pages_scanned": 0
-        }
+        LOGGER.error(f"[V2] Error procesando {pdf_path.name}: {e}", exc_info=True)
+        return {**resultado_base, "estado": "Error"}
 
 
-def process_folder_v2(input_folder: Path, debug: bool = False) -> List[Dict[str, Optional[str]]]:
-    pdf_files = sorted(input_folder.glob("*.pdf"))
-    LOGGER.info(f"PDFs encontrados (V2): {len(pdf_files)}")
+# =========================================================
+# PROCESAMIENTO DE CARPETA
+# =========================================================
+def process_folder_v2(
+    input_folder,         # Path (carpeta) o List[Path] (lista de archivos)
+    debug: bool = False,
+    cache=None,           # Optional[PdfCache]
+) -> List[Dict]:
+    """
+    Procesa PDFs con estructura V2.
 
-    results: List[Dict[str, Optional[str]]] = []
+    input_folder puede ser:
+      - Path de carpeta plana  → busca *.pdf dentro de ella (comportamiento original)
+      - List[Path] de archivos → los usa directamente (para fuente de red con subcarpetas)
+
+    Si se pasa un objeto cache (core.cache.PdfCache), omite los PDFs
+    ya procesados y registra los nuevos al terminar.
+    """
+    if isinstance(input_folder, list):
+        pdf_files = sorted(input_folder, key=lambda p: p.name)
+        if cache is not None:
+            pdf_files = [p for p in pdf_files if not cache.is_processed(p)]
+    elif cache is not None:
+        pdf_files = cache.pending_files(input_folder, version="V2")
+    else:
+        pdf_files = sorted(input_folder.glob("*.pdf"))
+
+    LOGGER.info(f"[V2] PDFs a procesar: {len(pdf_files)}")
+
+    results: List[Dict] = []
     for pdf_file in pdf_files:
-        results.append(extract_data_from_pdf_v2(pdf_file, debug=debug))
+        result = extract_data_from_pdf_v2(pdf_file, debug=debug)
+        results.append(result)
+
+        if cache is not None:
+            cache.mark(pdf_file, version="V2", estado=result["estado"])
 
     return results
 
 
 # =========================================================
-# EXPORT EXCEL (MISMO ARCHIVO, HOJA V2)
+# EXPORT EXCEL (usado cuando se ejecuta standalone)
 # =========================================================
-def write_results_to_excel(results: List[Dict[str, Optional[str]]], output_excel_path: Path, sheet_name: str = "V2") -> None:
+def write_results_to_excel(
+    results: List[Dict],
+    output_excel_path: Path,
+    sheet_name: str = "V2",
+) -> None:
+    """Escribe/actualiza hoja V2 en el Excel de resultados."""
     rows = []
     for r in results:
-        receiver = r.get("receiver")
-        date_ = r.get("date")
-        amount_ = r.get("amount")
-        supplier = r.get("beneficiary")
-
-        estado = "Completo" if (receiver and date_ and amount_ and supplier) else "Incompleto"
-
         rows.append({
             "Nombre archivo": r.get("file_name"),
-            "Receiver": receiver,
-            "Date": date_,
-            "Amount": amount_,
-            "Proveedor": supplier,
-            "Estado": estado
+            "Receiver":       r.get("receiver"),
+            "Date":           r.get("date"),
+            "Amount":         r.get("amount"),
+            "Proveedor":      r.get("beneficiary"),
+            "Estado":         r.get("estado", "Incompleto"),
         })
 
     df = pd.DataFrame(rows, columns=["Nombre archivo", "Receiver", "Date", "Amount", "Proveedor", "Estado"])
     output_excel_path.parent.mkdir(parents=True, exist_ok=True)
 
-    if output_excel_path.exists():
-        with pd.ExcelWriter(output_excel_path, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
-            df.to_excel(writer, sheet_name=sheet_name, index=False)
-    else:
-        with pd.ExcelWriter(output_excel_path, engine="openpyxl", mode="w") as writer:
-            df.to_excel(writer, sheet_name=sheet_name, index=False)
+    mode       = "a" if output_excel_path.exists() else "w"
+    extra_args = {"if_sheet_exists": "replace"} if mode == "a" else {}
 
-    LOGGER.info(f"Excel actualizado: {output_excel_path} | Hoja: {sheet_name}")
+    with pd.ExcelWriter(output_excel_path, engine="openpyxl", mode=mode, **extra_args) as writer:
+        df.to_excel(writer, sheet_name=sheet_name, index=False)
+
+    LOGGER.info(f"[V2] Excel actualizado: {output_excel_path} (hoja: {sheet_name})")
 
 
 # =========================================================
-# MAIN
+# MAIN — ejecución standalone para pruebas
 # =========================================================
 if __name__ == "__main__":
-    INPUT_FOLDER_V2 = Path(r"C:\Users\johangc\Desktop\Desarrollo\Origen_Destino DIAN\pdfs V2")
-    OUTPUT_EXCEL = Path(r"C:\Users\johangc\Desktop\Desarrollo\Origen_Destino DIAN\resultado_extraccion.xlsx")
-
-    DEBUG = False  # True para depurar Creditor
-
-    results = process_folder_v2(INPUT_FOLDER_V2, debug=DEBUG)
+    results = process_folder_v2(config.DIR_PDFS_V2, debug=config.DEBUG)
 
     LOGGER.info("=== RESUMEN V2 ===")
     for r in results:
         LOGGER.info(
-            f"{r['file_name']} | Receiver: {r['receiver']} | Date: {r['date']} | Amount: {r['amount']} | "
-            f"Proveedor: {r['beneficiary']} | Páginas: {r['pages_scanned']}"
+            f"{r['file_name']} | Receiver:{r['receiver']} | Date:{r['date']} | "
+            f"Amount:{r['amount']} | Proveedor:{r['beneficiary']} | "
+            f"Páginas:{r['pages_scanned']} | Estado:{r['estado']}"
         )
-
-    write_results_to_excel(results, OUTPUT_EXCEL, sheet_name="V2")

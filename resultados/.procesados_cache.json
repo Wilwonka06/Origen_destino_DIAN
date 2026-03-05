@@ -1,0 +1,572 @@
+{
+  "0570eb189be4b25d150bfb4f90034a42": {
+    "file": "13286 14518 SOORTY ENTERPRISES.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:06:20",
+    "estado": "Incompleto"
+  },
+  "c4d619a081b59c555dcfd6d8e217c9d6": {
+    "file": "13310 TEXTIL CANATIBA.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:06:23",
+    "estado": "Incompleto"
+  },
+  "610e072f663e15ecd36831fbcec58a4a": {
+    "file": "13357 FOSHAN BLUE.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:06:25",
+    "estado": "Incompleto"
+  },
+  "ec04b247614c0a2ad388d5a05c3a976f": {
+    "file": "13379 14687 ARTISTIC MILLINERS.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:06:28",
+    "estado": "Incompleto"
+  },
+  "1d611a522c3d203612737aa783193415": {
+    "file": "13401 13707 WUJIANG LA MODE.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:06:31",
+    "estado": "Incompleto"
+  },
+  "427f24507ea32a6cd2934d48784bec04": {
+    "file": "13414 SHAOXING TUJIA.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:06:33",
+    "estado": "Incompleto"
+  },
+  "1f02ddc20cde254a7c2682d6b4725e4e": {
+    "file": "13430 SEDATEX.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:06:36",
+    "estado": "Incompleto"
+  },
+  "95c167b0fece541b2689513bdd776ab2": {
+    "file": "13460 KIPAS PAZARLAME.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:06:39",
+    "estado": "Incompleto"
+  },
+  "c164ae2d460c51055a25a45242306f4e": {
+    "file": "13464 SHAOXING QIFEI.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:06:41",
+    "estado": "Incompleto"
+  },
+  "f509688a3582ce49d7766e91bbfb547f": {
+    "file": "13467 DEPEI.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:06:44",
+    "estado": "Incompleto"
+  },
+  "8b1cb27410e686632ecce36c4c5de465": {
+    "file": "13506 RAYMOND UCO DENIM.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:06:47",
+    "estado": "Incompleto"
+  },
+  "322838c4475ce0de3c5b39b3514c5192": {
+    "file": "13524 TEXTIL CANATIBA.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:06:49",
+    "estado": "Incompleto"
+  },
+  "291875dcc0aa6d928947d0ddb865eec3": {
+    "file": "13560 SANKO.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:06:52",
+    "estado": "Incompleto"
+  },
+  "311f839bd0642af30323825440bbd70d": {
+    "file": "13573 PROSPERITY TEXTILE.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:06:54",
+    "estado": "Incompleto"
+  },
+  "4b4602f4ee1df026de9fb11db3ed3622": {
+    "file": "13599 13912 14546 FOSHAN BLUE.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:06:57",
+    "estado": "Incompleto"
+  },
+  "a33e3c79992eab4b7c4fdf8684cc5ccd": {
+    "file": "13610 HEBEI XINDADONG.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:06:59",
+    "estado": "Incompleto"
+  },
+  "d896b6d5122b9e6fa892998292923e90": {
+    "file": "13629 13628 14532 ARTISTIC MILLINERS.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:07:02",
+    "estado": "Incompleto"
+  },
+  "507802517cb941d58c90d36c668d404c": {
+    "file": "13632 13489 13632 SHAOXING ADA.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:07:04",
+    "estado": "Incompleto"
+  },
+  "03816ac21b8ef3e8ea1ef87a73a95afe": {
+    "file": "13665 13479 JIANGSU PINYTEX.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:07:07",
+    "estado": "Incompleto"
+  },
+  "3789bb2c8a3c988df2303fa01b6d0794": {
+    "file": "13675 TEXTIL CANATIBA.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:07:10",
+    "estado": "Incompleto"
+  },
+  "aea36d51ed6afcf3cfa279a05227264a": {
+    "file": "13784 14406 FOSHAN BLUE.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:07:12",
+    "estado": "Incompleto"
+  },
+  "3929448c7400dd9fcd2a3097fb52838e": {
+    "file": "13786 YULIN YIXING SPINNING.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:07:15",
+    "estado": "Incompleto"
+  },
+  "79459d47929760aef2340b0c7303225b": {
+    "file": "13791 13792 SOORTY ENTERPRISES 2.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:07:17",
+    "estado": "Incompleto"
+  },
+  "e35407410714c3f7d4931146a3bd104f": {
+    "file": "13791 13792 SOORTY ENTERPRISES.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:07:20",
+    "estado": "Incompleto"
+  },
+  "68e02f3fe67a4b9a730a8aecfa5e0ad4": {
+    "file": "13795 KIPAS PAZARLAME.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:07:23",
+    "estado": "Incompleto"
+  },
+  "39f0dd9b767e12258fa29a528660e3dd": {
+    "file": "13813 13812 CREDITEX.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:07:25",
+    "estado": "Incompleto"
+  },
+  "7af84ea655f3a179aa9b4d84c0baabd9": {
+    "file": "13818 14229 FOSHAN BLUE.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:07:26",
+    "estado": "Incompleto"
+  },
+  "eb8feb22d0dc82e498f4745dce882cee": {
+    "file": "13828 ZHEJIANG LESON.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:07:28",
+    "estado": "Incompleto"
+  },
+  "bc3e2d3ca922b018812562280184c2b4": {
+    "file": "13856 13464 SHAOXING QIFEI.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:07:31",
+    "estado": "Incompleto"
+  },
+  "9d9d67e217b1d65a858006d656cdba2e": {
+    "file": "13857 SHAOXING QIFEI.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:07:33",
+    "estado": "Incompleto"
+  },
+  "b59f470696731ea44f526e5291b0fcc1": {
+    "file": "13862 13851 SHANGHAI DAYA.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:07:36",
+    "estado": "Incompleto"
+  },
+  "6efdb097b6f9b8046744a953bd8290be": {
+    "file": "13875 SHAOXING TUJIA.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:07:38",
+    "estado": "Incompleto"
+  },
+  "0da181b69304bd7f0faae5a6e6a7d017": {
+    "file": "13879 14137 WUJIANG LA MODE.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:07:41",
+    "estado": "Incompleto"
+  },
+  "5a30869967fdae4343e92477982048bd": {
+    "file": "13910 14627 DEPEI.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:07:43",
+    "estado": "Incompleto"
+  },
+  "8bfabb1ce7dc114c25932125e344e7a6": {
+    "file": "13911 14553 FOSHAN BLUE.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:07:46",
+    "estado": "Incompleto"
+  },
+  "e237a4599a04b8a8016a0ec9dc2aa4d0": {
+    "file": "13915 14346 14170 SHAOXING QIFEI.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:07:48",
+    "estado": "Incompleto"
+  },
+  "7fe8a019f65de2288632eaad58160b82": {
+    "file": "13920 SHAOXING NAYING.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:07:51",
+    "estado": "Incompleto"
+  },
+  "381d93b170f896566e7658afb8b8da71": {
+    "file": "13955 13847 SEDATEX.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:07:54",
+    "estado": "Incompleto"
+  },
+  "a6fdf3cf7696cb0bbb215e58795831c9": {
+    "file": "13960 SEDATEX.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:07:56",
+    "estado": "Incompleto"
+  },
+  "c650cd50215391ece3cae9bc6e3ca311": {
+    "file": "13978 SHAOXING TUJIA.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:07:59",
+    "estado": "Incompleto"
+  },
+  "500b93f74a70cbfdd3c04fd5fc3fd785": {
+    "file": "13980 GESI TEKSTIL.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:08:02",
+    "estado": "Incompleto"
+  },
+  "cfacd8cb622d5c52def827ad89720d60": {
+    "file": "13985 SANTISTA TEXTIL.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:08:02",
+    "estado": "Incompleto"
+  },
+  "e8375dbcc984acf777e432e6851b09ed": {
+    "file": "13986 ZHEJIANG LESOSN.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:08:05",
+    "estado": "Incompleto"
+  },
+  "bf5bd39e0f9d72703aaef826d07e5061": {
+    "file": "13991 ORTA ANADOLU.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:08:07",
+    "estado": "Incompleto"
+  },
+  "fc2b3bc25d8048c36b1c827c0e1ed85d": {
+    "file": "14049 AKBASLAR TEKSTIL.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:08:10",
+    "estado": "Incompleto"
+  },
+  "2e4edb9f91398404a7b2a7148482f8ef": {
+    "file": "14050 14439 AKBASLAR TEKSTIL.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:08:13",
+    "estado": "Incompleto"
+  },
+  "64f9044df87b7a847ed5786bd3a6d1f5": {
+    "file": "14057 GESI TEKSTIL.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:08:13",
+    "estado": "Incompleto"
+  },
+  "e415e8c62799e0b4e8a74a05e627c687": {
+    "file": "14060 SHAOXING JINZHOU.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:08:15",
+    "estado": "Incompleto"
+  },
+  "10971eb893604485b46f171bd2a4b70a": {
+    "file": "14081 SEDATEX.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:08:18",
+    "estado": "Incompleto"
+  },
+  "bd92393be57806137e8d206b916745cb": {
+    "file": "14095 DEPEI.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:08:21",
+    "estado": "Incompleto"
+  },
+  "4ae4e17cc09329f041e72a2033b52879": {
+    "file": "14103 CATAGUASES.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:08:24",
+    "estado": "Incompleto"
+  },
+  "0c232c161bc3e20ddb143c761d0199cd": {
+    "file": "14109 SOORTY ENTERPRISES.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:08:27",
+    "estado": "Incompleto"
+  },
+  "04695fba7e4e6e26bd62d71d2400b2e9": {
+    "file": "14123 HEBEI XINDADONG.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:08:29",
+    "estado": "Incompleto"
+  },
+  "a3245439bf7d0e2cf9217c2e80eb831a": {
+    "file": "14131 14129 14629 AKBASLAR.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:08:32",
+    "estado": "Incompleto"
+  },
+  "238b7ca0c78e7576f6498fe9088fefb6": {
+    "file": "14132 AKBASLAR TEKSTIL.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:08:34",
+    "estado": "Incompleto"
+  },
+  "9a1b9d6660c54515ad3e9a4b725ca5af": {
+    "file": "14134 CHRIS J CORPORATION.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:08:37",
+    "estado": "Incompleto"
+  },
+  "500557f1b27a4c420971a0954ca8975c": {
+    "file": "14135 14660 14661 WUJIANG LA MODE.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:08:40",
+    "estado": "Incompleto"
+  },
+  "b1088b38b0e12a388c139023109b60d6": {
+    "file": "14140 BMS FASHION.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:08:42",
+    "estado": "Incompleto"
+  },
+  "4f406808502c52dc012787024138b71b": {
+    "file": "14164 NAVEENA.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:08:45",
+    "estado": "Incompleto"
+  },
+  "c6f86b04dfc4c06604f5e20ff10a81d0": {
+    "file": "14174 ARTISTIC MILLINERS.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:08:47",
+    "estado": "Incompleto"
+  },
+  "2aa333c90885fa5fe589b9b6345a576b": {
+    "file": "14180 ZHEJIANG LESON.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:08:50",
+    "estado": "Incompleto"
+  },
+  "3f770754ec05dce0987c7cd0f6460536": {
+    "file": "14193 HEBEI XINDADONG.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:08:53",
+    "estado": "Incompleto"
+  },
+  "bc0102b20664f72fcbc6cedba11b6883": {
+    "file": "14197 HEBEI XINDADONG.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:08:55",
+    "estado": "Incompleto"
+  },
+  "73eadccfc524e42377f5385ee3b855bb": {
+    "file": "14232 13581 YULIN YIXING.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:08:57",
+    "estado": "Incompleto"
+  },
+  "37934db0afab5dd598a6723091426716": {
+    "file": "14248 14322 JIANGSU PINYTEX.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:09:00",
+    "estado": "Incompleto"
+  },
+  "f3cf53f956631eb511c0bb053ae5c527": {
+    "file": "14257 14274 NANTONG JIAHENG.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:09:03",
+    "estado": "Incompleto"
+  },
+  "bc3e7ad83aadf9e47f74cdfc2d78c6d3": {
+    "file": "14259 NANTONG JIAHENG.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:09:05",
+    "estado": "Incompleto"
+  },
+  "12ecd3d2b9c3808ad210d99b5fe49070": {
+    "file": "14285 14287 SHAFI TEXCEL.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:09:08",
+    "estado": "Incompleto"
+  },
+  "566e5f3a1c7ad3d5c1adcec9ffb45a13": {
+    "file": "14341 GID LLC.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:09:11",
+    "estado": "Incompleto"
+  },
+  "38d9bafd4d77c7e14f76542eda9874e9": {
+    "file": "14344 NANTONG JIAHENG.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:09:13",
+    "estado": "Incompleto"
+  },
+  "aca9430835af04afb687d49cd9f5bb3f": {
+    "file": "14352 14355 14139 GID LLC.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:09:16",
+    "estado": "Incompleto"
+  },
+  "d5746adedacc01cda9494cd5842fc74d": {
+    "file": "14354 YULIN YIXING.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:09:19",
+    "estado": "Incompleto"
+  },
+  "6d4ba2892f44b7f92c035a454b14ef85": {
+    "file": "14356 14357 14537 YULIN YUXING.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:09:22",
+    "estado": "Incompleto"
+  },
+  "f10f1b509c0c5c07aa5285a71f5f91d4": {
+    "file": "14376 ARTISTIC FABRICS MILLS.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:09:25",
+    "estado": "Incompleto"
+  },
+  "b133f3c0aeccc43a1adf2fce6636922c": {
+    "file": "14377 14378 ARTISTIC FABRIC MILLS.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:09:28",
+    "estado": "Incompleto"
+  },
+  "4db952fd94c53c516072e6dc2a6770fc": {
+    "file": "14415 14416 14480 14481 ZHEJIANG LESON IMP EXP.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:09:31",
+    "estado": "Incompleto"
+  },
+  "89a05143ecf35cb270c318482a5a17fc": {
+    "file": "14455 FOSHAN BLUE.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:09:31",
+    "estado": "Incompleto"
+  },
+  "11ad80c8cd8557227866db9750cb3a27": {
+    "file": "14469 14566 GID LLC.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:09:34",
+    "estado": "Incompleto"
+  },
+  "d637db2b96a844f7bc207e2001133053": {
+    "file": "14499 SANKO.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:09:37",
+    "estado": "Incompleto"
+  },
+  "496779f8e0d1b20e7e9594cec8a6d78c": {
+    "file": "14519 ARTISTIC FABRICS.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:09:39",
+    "estado": "Incompleto"
+  },
+  "95dc61a78610ba18f5e51029d66cf97b": {
+    "file": "14528 NANTONG JIAHENG.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:09:42",
+    "estado": "Incompleto"
+  },
+  "1dcdb308e7e02ec0bb7326b99ef9ecb5": {
+    "file": "14533 14534 XIN XING LONG.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:09:45",
+    "estado": "Incompleto"
+  },
+  "d2bd5a85e6687f1404affaaa04ddce26": {
+    "file": "14534 XIN XING LONG.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:09:48",
+    "estado": "Incompleto"
+  },
+  "98c74f09b2e843d9fa136d0f3e980e32": {
+    "file": "14565 14667 GID LLC.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:09:51",
+    "estado": "Incompleto"
+  },
+  "7979f5f54b4fc51b538eeab1a3aed05d": {
+    "file": "14586 14587 ARTISTIC FABRIC MILLS.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:09:54",
+    "estado": "Incompleto"
+  },
+  "8b624d3a13dbb445dadf0e7c1ab48a95": {
+    "file": "14588 14589 CHRIS J.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:09:57",
+    "estado": "Incompleto"
+  },
+  "3cc9b4931de62a2c950520d7f251520f": {
+    "file": "14591 CREDITEX.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:09:59",
+    "estado": "Incompleto"
+  },
+  "41b0d6995eb143addb16aa63720412cc": {
+    "file": "14595 14596 14598 14599 HANGZHOU SANJIN.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:10:02",
+    "estado": "Incompleto"
+  },
+  "ace0831039534c26e5ef6ab0a7fc1db3": {
+    "file": "14600 14601 WUJIANG LA MODE.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:10:05",
+    "estado": "Incompleto"
+  },
+  "df052434a49b12ab86474fe6b62c09ea": {
+    "file": "14602 ORTA ANADOLU.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:10:08",
+    "estado": "Incompleto"
+  },
+  "223be57ea4e84d3906df523e20ed06ee": {
+    "file": "14628 ARTISTIC FABRIC MILLS.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:10:10",
+    "estado": "Incompleto"
+  },
+  "ec502113902f38d5651d353d24c87946": {
+    "file": "14643 MALHAS MENEGOTTI.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:10:13",
+    "estado": "Incompleto"
+  },
+  "2222582c9f924cc3c65a4e9960e40a27": {
+    "file": "14657 14658 SHAOXING NAYING.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:10:16",
+    "estado": "Incompleto"
+  },
+  "3e435f3a3012f0b09cf69ae9712e3585": {
+    "file": "14668 14669 SHAOXING SAGA.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:10:18",
+    "estado": "Incompleto"
+  },
+  "f162efdca973059a90a907b56adf218d": {
+    "file": "14714 14715 WUJIANG LA MODE.pdf",
+    "version": "V1",
+    "procesado_en": "2026-03-05T10:10:21",
+    "estado": "Incompleto"
+  }
+}

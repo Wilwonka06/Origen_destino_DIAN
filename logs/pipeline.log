@@ -1,0 +1,124 @@
+[INFO] origen_destino_dian.main | ╔══════════════════════════════════════════╗
+[INFO] origen_destino_dian.main |   INICIO PIPELINE — modo: OCR
+[INFO] origen_destino_dian.main |   Base: C:\Proyectos Comodin\Origen_Destino DIAN
+[INFO] origen_destino_dian.main | ╚══════════════════════════════════════════╝
+[INFO] origen_destino_dian.main | ── PASO 1: Extracción OCR ──
+[INFO] origen_destino_dian.scripts.run_pipeline | === INICIO PIPELINE EXTRACCIÓN ===
+[INFO] origen_destino_dian.scripts.run_pipeline | Paso 1: Descubriendo PDFs en fuente de red...
+[INFO] origen_destino_dian.scripts.run_pipeline | Descubrimiento PDF en red → carpetas_día=9 | V1=95 | V2=0
+[INFO] origen_destino_dian.scripts.run_pipeline | Paso 1: Extracción V1...
+[INFO] origen_destino_dian.scripts.reader_pdf_V1 | [V1] PDFs a procesar: 95
+[INFO] origen_destino_dian.core.ocr_engine | Tesseract encontrado: C:\Users\ATESORERIA\AppData\Local\Programs\Tesseract-OCR\tesseract.exe
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 13286 14518 SOORTY ENTERPRISES.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 13310 TEXTIL CANATIBA.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 13357 FOSHAN BLUE.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 13379 14687 ARTISTIC MILLINERS.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 13401 13707 WUJIANG LA MODE.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 13414 SHAOXING TUJIA.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 13430 SEDATEX.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 13460 KIPAS PAZARLAME.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 13464 SHAOXING QIFEI.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 13467 DEPEI.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 13506 RAYMOND UCO DENIM.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 13524 TEXTIL CANATIBA.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 13560 SANKO.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 13573 PROSPERITY TEXTILE.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 13599 13912 14546 FOSHAN BLUE.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 13610 HEBEI XINDADONG.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 13629 13628 14532 ARTISTIC MILLINERS.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 13632 13489 13632 SHAOXING ADA.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 13665 13479 JIANGSU PINYTEX.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 13675 TEXTIL CANATIBA.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 13784 14406 FOSHAN BLUE.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 13786 YULIN YIXING SPINNING.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 13791 13792 SOORTY ENTERPRISES 2.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 13791 13792 SOORTY ENTERPRISES.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 13795 KIPAS PAZARLAME.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 13813 13812 CREDITEX.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 13818 14229 FOSHAN BLUE.pdf → Incompleto. Falta: ['Receiver', 'Date', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 13828 ZHEJIANG LESON.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 13856 13464 SHAOXING QIFEI.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 13857 SHAOXING QIFEI.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 13862 13851 SHANGHAI DAYA.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 13875 SHAOXING TUJIA.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 13879 14137 WUJIANG LA MODE.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 13910 14627 DEPEI.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 13911 14553 FOSHAN BLUE.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 13915 14346 14170 SHAOXING QIFEI.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 13920 SHAOXING NAYING.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 13955 13847 SEDATEX.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 13960 SEDATEX.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 13978 SHAOXING TUJIA.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 13980 GESI TEKSTIL.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 13985 SANTISTA TEXTIL.pdf → Incompleto. Falta: ['Date', 'Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 13986 ZHEJIANG LESOSN.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 13991 ORTA ANADOLU.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14049 AKBASLAR TEKSTIL.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14050 14439 AKBASLAR TEKSTIL.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14057 GESI TEKSTIL.pdf → Incompleto. Falta: ['Date', 'Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14060 SHAOXING JINZHOU.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14081 SEDATEX.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14095 DEPEI.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14103 CATAGUASES.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14109 SOORTY ENTERPRISES.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14123 HEBEI XINDADONG.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14131 14129 14629 AKBASLAR.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14132 AKBASLAR TEKSTIL.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14134 CHRIS J CORPORATION.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14135 14660 14661 WUJIANG LA MODE.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14140 BMS FASHION.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14164 NAVEENA.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14174 ARTISTIC MILLINERS.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14180 ZHEJIANG LESON.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14193 HEBEI XINDADONG.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14197 HEBEI XINDADONG.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14232 13581 YULIN YIXING.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14248 14322 JIANGSU PINYTEX.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14257 14274 NANTONG JIAHENG.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14259 NANTONG JIAHENG.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14285 14287 SHAFI TEXCEL.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14341 GID LLC.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14344 NANTONG JIAHENG.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14352 14355 14139 GID LLC.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14354 YULIN YIXING.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14356 14357 14537 YULIN YUXING.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14376 ARTISTIC FABRICS MILLS.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14377 14378 ARTISTIC FABRIC MILLS.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14415 14416 14480 14481 ZHEJIANG LESON IMP EXP.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14455 FOSHAN BLUE.pdf → Incompleto. Falta: ['Date', 'Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14469 14566 GID LLC.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14499 SANKO.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14519 ARTISTIC FABRICS.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14528 NANTONG JIAHENG.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14533 14534 XIN XING LONG.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14534 XIN XING LONG.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14565 14667 GID LLC.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14586 14587 ARTISTIC FABRIC MILLS.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14588 14589 CHRIS J.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14591 CREDITEX.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14595 14596 14598 14599 HANGZHOU SANJIN.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14600 14601 WUJIANG LA MODE.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14602 ORTA ANADOLU.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14628 ARTISTIC FABRIC MILLS.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14643 MALHAS MENEGOTTI.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14657 14658 SHAOXING NAYING.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14668 14669 SHAOXING SAGA.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[WARNING] origen_destino_dian.scripts.reader_pdf_V1 | [V1] 14714 14715 WUJIANG LA MODE.pdf → Incompleto. Falta: ['Amount', 'Beneficiary']
+[INFO] origen_destino_dian.scripts.run_pipeline | Paso 1: Extracción V2...
+[INFO] origen_destino_dian.scripts.reader_pdf_V2 | [V2] PDFs a procesar: 0
+[INFO] origen_destino_dian.scripts.run_pipeline | Paso 2: Enriquecimiento Proveedor (fuzzy)...
+[INFO] origen_destino_dian.scripts.run_pipeline | Enriquecimiento Proveedor: revisados=0 | reemplazados=0 | threshold=85
+[INFO] origen_destino_dian.scripts.run_pipeline | Enriquecimiento Proveedor: revisados=0 | reemplazados=0 | threshold=85
+[INFO] origen_destino_dian.scripts.run_pipeline | Paso 3: Cruce Bd Swift (País/Ciudad)...
+[INFO] origen_destino_dian.scripts.run_pipeline | Bd Swift: usando hoja 'Sheet1'
+[INFO] origen_destino_dian.scripts.run_pipeline | Cruce Bd Swift: 91/95 coincidencias
+[INFO] origen_destino_dian.scripts.run_pipeline | Cruce Bd Swift: 0/0 coincidencias
+[INFO] origen_destino_dian.scripts.run_pipeline | Paso 4: Post-proceso (Nombre personalizado, mayúsculas, Amount)...
+[INFO] origen_destino_dian.scripts.run_pipeline | Paso 5: Generando IDs y columnas finales...
+[INFO] origen_destino_dian.scripts.run_pipeline | V1 → Completos: 0 | Incompletos: 95
+[INFO] origen_destino_dian.scripts.run_pipeline | V2 → Completos: 0 | Incompletos: 0
+[INFO] origen_destino_dian.scripts.run_pipeline | Paso 6: Exportando Swift_completos y Swift_manuales...
+[INFO] origen_destino_dian.core.excel_utils | [completos] Excel guardado: Swift_completos.xlsx (['V1', 'V2'])
+[INFO] origen_destino_dian.core.excel_utils | [manuales] Excel guardado: Swift_manuales.xlsx (['V1', 'V2'])
+[INFO] origen_destino_dian.scripts.run_pipeline | === FIN PIPELINE ===  Completos:0 | Incompletos:95 | Errores:0
+[INFO] origen_destino_dian.main | ── PASO 1 completado ──

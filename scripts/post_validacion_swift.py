@@ -1,323 +1,412 @@
 # -*- coding: utf-8 -*-
 """
-POST VALIDACIÓN SWIFT (SCRIPT ÚNICO)
-1) Swift_manuales -> Swift_completos (APPEND por hoja V1/V2, sin duplicar id)
-   - Recalcula Nombre personalizado (Proveedor + Receiver)
-   - Filtra solo registros "Completo"
-   - Marca Estado="Completo" a los insertados
+post_validacion_swift.py — Post validación y traslado de manuales corregidos
 
-2) Swift_completos -> Acumulado_swift (APPEND)
-   - Toma TODO lo que exista en Swift_completos (V1+V2)
-   - Inserta en una sola hoja "Acumulado"
-   - Agrega Versión, Fecha Control, Formulario, Llave
-   - Sin duplicar por id
+Pasos:
+  1) Swift_manuales → Swift_completos
+     Lee los registros corregidos manualmente, filtra los completos
+     y los mueve a Swift_completos sin duplicar por 'id'.
 
-3) Swift_completos -> Datos_Origen_Destino_V1 / V2 (PLANTILLAS BANCOLOMBIA)
-   - No toca fila 1 (logo/título)
-   - Encabezados en fila 2
-   - Escribe desde fila 3
-   - REEMPLAZA (NO APPEND)
+  2) Swift_completos → Acumulado_swift (APPEND sin duplicar por id)
+     Agrega Versión, Fecha Control. Acumula historial.
+
+  3) Swift_completos → Plantillas Bancolombia (REEMPLAZA)
+     Escribe en Datos_Origen_Destino_V1.xlsx y V2.xlsx desde fila 3,
+     sin tocar fila 1 (logo) ni encabezados en fila 2.
+
+CAMBIOS vs versión anterior:
+  - Rutas y constantes → config.py
+  - Logging → core.logger
+  - excel_utils.write_sheets / read_sheet_safe / ensure_columns
+  - Funciones públicas contar_listos_en_manuales() y ejecutar_mover_manuales()
+    para ser llamadas desde main.py (modo post)
+  - Lógica funcional sin cambios
 """
 
-from pathlib import Path
+from __future__ import annotations
+
 from datetime import datetime
+from pathlib import Path
+
 import pandas as pd
-import logging
 from openpyxl import load_workbook
 
+import config
+from core.logger import get_logger
+from core.excel_utils import read_sheet_safe, write_sheets, ensure_columns
+from core.text_utils import build_nombre_personalizado
+from core.validators import validate_input_files
 
-# =========================================================
-# LOG
-# =========================================================
-logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
-LOGGER = logging.getLogger("post_swift_full")
+LOGGER = get_logger(__name__)
 
-
-# =========================================================
-# RUTAS
-# =========================================================
-# BASE del proyecto (raíz)
-BASE_ROOT = Path(r"C:\Users\johangc\Desktop\Desarrollo\Origen_Destino DIAN")
-
-# Carpeta resultados
-BASE_DIR = BASE_ROOT / "resultados"
-
-SWIFT_MANUALES = BASE_DIR / "Swift_manuales.xlsx"
-SWIFT_COMPLETOS = BASE_DIR / "Swift_completos.xlsx"
-
-ACUMULADO = BASE_DIR / "Acumulado_swift.xlsx"
-ACUMULADO_SHEET = "Acumulado"
-
-# Plantillas Bancolombia (normalmente están en raíz del proyecto)
-DESTINO_V1 = BASE_ROOT / BASE_DIR / "Datos_Origen_Destino_V1.xlsx"
-DESTINO_V2 = BASE_ROOT / BASE_DIR / "Datos_Origen_Destino_V2.xlsx"
-
-CUENTA_COMPENSACION = "2190709002"
+# Límite de caracteres para "Nombre personalizado" en plantillas Bancolombia
+NOMBRE_PERSONALIZADO_LIMITE: int = 50
 
 
 # =========================================================
-# CONFIG ACUMULADO (orden esperado)
+# UTILIDADES INTERNAS
 # =========================================================
-ACUMULADO_COLS = [
-    "Nombre archivo",
-    "Receiver",
-    "Date",
-    "Amount",
-    "Proveedor",
-    "Pais",
-    "Ciudad",
-    "Nombre personalizado",
-    "Estado",
-    "Versión",
-    "Fecha Control",
-    "id",
-    "Formulario",
-    "Llave",
-]
-
-
-# =========================================================
-# UTILIDADES
-# =========================================================
-def ensure_columns(df: pd.DataFrame, cols: list) -> pd.DataFrame:
+def _recalcular_nombre_personalizado(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
-    for c in cols:
-        if c not in out.columns:
-            out[c] = ""
-    return out[cols]
-
-
-def recalcular_nombre_personalizado(df: pd.DataFrame) -> pd.DataFrame:
-    out = df.copy()
-    out["Proveedor"] = out.get("Proveedor", "").fillna("").astype(str).str.strip()
-    out["Receiver"] = out.get("Receiver", "").fillna("").astype(str).str.strip()
-    out["Nombre personalizado"] = (out["Proveedor"] + " " + out["Receiver"]).str.strip()
+    out["Nombre personalizado"] = out.apply(
+        lambda r: build_nombre_personalizado(r.get("Proveedor"), r.get("Receiver")),
+        axis=1,
+    )
     return out
 
 
-def es_completo(row) -> bool:
-    return (
-        pd.notna(row.get("Receiver")) and str(row.get("Receiver")).strip() != ""
-        and pd.notna(row.get("Proveedor")) and str(row.get("Proveedor")).strip() != ""
-        and pd.notna(row.get("Amount")) and str(row.get("Amount")).strip() != ""
-    )
+def _es_completo(row) -> bool:
+    """Un registro es completo si tiene Receiver, Proveedor y Amount."""
+    def _has(v) -> bool:
+        if v is None:
+            return False
+        if isinstance(v, float) and pd.isna(v):
+            return False
+        return str(v).strip().lower() not in ("", "nan", "none", "nat")
+
+    return _has(row.get("Receiver")) and _has(row.get("Proveedor")) and _has(row.get("Amount"))
 
 
-def filtrar_completos(df: pd.DataFrame) -> pd.DataFrame:
+def _filtrar_completos(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
-    out["Estado"] = out.apply(lambda r: "Completo" if es_completo(r) else "Incompleto", axis=1)
+    out["Estado"] = out.apply(lambda r: "Completo" if _es_completo(r) else "Incompleto", axis=1)
     return out.loc[out["Estado"] == "Completo"].copy()
 
 
-def read_sheet_safe(path: Path, sheet: str) -> pd.DataFrame:
-    if not path.exists():
-        return pd.DataFrame()
-    return pd.read_excel(path, sheet_name=sheet)
-
-
-def write_swift_completos(df_v1: pd.DataFrame, df_v2: pd.DataFrame) -> None:
-    with pd.ExcelWriter(SWIFT_COMPLETOS, engine="openpyxl", mode="w") as writer:
-        df_v1.to_excel(writer, sheet_name="V1", index=False)
-        df_v2.to_excel(writer, sheet_name="V2", index=False)
-    LOGGER.info(f"Swift_completos actualizado: {SWIFT_COMPLETOS}")
+def _ensure_id_column(df: pd.DataFrame, label: str) -> None:
+    """Lanza error descriptivo si el DataFrame no tiene columna 'id'."""
+    if not df.empty and "id" not in df.columns:
+        raise KeyError(
+            f"{label} no tiene columna 'id'. "
+            "Esta columna es obligatoria para evitar duplicados."
+        )
 
 
 # =========================================================
-# PASO 1) Swift_manuales -> Swift_completos
+# FUNCIONES PÚBLICAS PARA main.py (modo post)
 # =========================================================
-def paso_1_mover_manuales_a_completos() -> tuple[pd.DataFrame, pd.DataFrame]:
-    if not SWIFT_MANUALES.exists():
-        raise FileNotFoundError(f"No existe: {SWIFT_MANUALES}")
+def contar_listos_en_manuales() -> tuple[int, int]:
+    """
+    Lee Swift_manuales y cuenta cuántos registros están listos para mover
+    (completos) y cuántos aún están incompletos.
 
-    man_v1 = pd.read_excel(SWIFT_MANUALES, sheet_name="V1")
-    man_v2 = pd.read_excel(SWIFT_MANUALES, sheet_name="V2")
+    Retorna: (listos, pendientes)
+    Usado por main.py para mostrar el resumen antes de confirmar.
+    """
+    if not config.SWIFT_MANUALES.exists():
+        return 0, 0
 
-    man_v1 = recalcular_nombre_personalizado(man_v1)
-    man_v2 = recalcular_nombre_personalizado(man_v2)
+    df_v1 = read_sheet_safe(config.SWIFT_MANUALES, config.SHEET_V1, context="contar_manuales")
+    df_v2 = read_sheet_safe(config.SWIFT_MANUALES, config.SHEET_V2, context="contar_manuales")
 
-    man_v1_ok = filtrar_completos(man_v1)
-    man_v2_ok = filtrar_completos(man_v2)
+    # Recalcular nombre personalizado antes de evaluar
+    df_v1 = _recalcular_nombre_personalizado(df_v1) if not df_v1.empty else df_v1
+    df_v2 = _recalcular_nombre_personalizado(df_v2) if not df_v2.empty else df_v2
 
-    comp_v1 = read_sheet_safe(SWIFT_COMPLETOS, "V1")
-    comp_v2 = read_sheet_safe(SWIFT_COMPLETOS, "V2")
+    listos = sum([
+        len(_filtrar_completos(df_v1)) if not df_v1.empty else 0,
+        len(_filtrar_completos(df_v2)) if not df_v2.empty else 0,
+    ])
+    total = len(df_v1) + len(df_v2)
+    pendientes = total - listos
 
-    # Validaciones ID
-    for df_name, df in [("Swift_manuales V1", man_v1_ok), ("Swift_manuales V2", man_v2_ok)]:
-        if not df.empty and "id" not in df.columns:
-            raise KeyError(f"{df_name} no tiene columna 'id'. Es obligatoria para no duplicar.")
+    return listos, pendientes
 
-    if not comp_v1.empty and "id" not in comp_v1.columns:
-        raise KeyError("Swift_completos (V1) no tiene columna 'id'.")
-    if not comp_v2.empty and "id" not in comp_v2.columns:
-        raise KeyError("Swift_completos (V2) no tiene columna 'id'.")
 
-    # Si no hay nuevos completos, igual devolvemos la foto actual (para que pasos siguientes no queden con data vieja)
+def ejecutar_mover_manuales() -> int:
+    """
+    Mueve los registros completos de Swift_manuales a Swift_completos.
+    Retorna el número de registros efectivamente movidos.
+    """
+    return _paso_1_mover_manuales()[2]  # (df_v1, df_v2, total_movidos)
+
+
+# =========================================================
+# PASO 1) Swift_manuales → Swift_completos
+# =========================================================
+def _paso_1_mover_manuales() -> tuple[pd.DataFrame, pd.DataFrame, int]:
+    """
+    Lee manuales, filtra completos, los agrega a Swift_completos sin duplicar.
+    Retorna (df_comp_v1_actualizado, df_comp_v2_actualizado, total_movidos).
+    """
+    validate_input_files(config.SWIFT_MANUALES, context="post_validacion")
+
+    man_v1 = read_sheet_safe(config.SWIFT_MANUALES, config.SHEET_V1, context="manuales")
+    man_v2 = read_sheet_safe(config.SWIFT_MANUALES, config.SHEET_V2, context="manuales")
+
+    # Recalcular Nombre personalizado (puede haber sido corregido manualmente)
+    man_v1 = _recalcular_nombre_personalizado(man_v1) if not man_v1.empty else man_v1
+    man_v2 = _recalcular_nombre_personalizado(man_v2) if not man_v2.empty else man_v2
+
+    man_v1_ok = _filtrar_completos(man_v1) if not man_v1.empty else pd.DataFrame()
+    man_v2_ok = _filtrar_completos(man_v2) if not man_v2.empty else pd.DataFrame()
+
+    comp_v1 = read_sheet_safe(config.SWIFT_COMPLETOS, config.SHEET_V1, context="completos")
+    comp_v2 = read_sheet_safe(config.SWIFT_COMPLETOS, config.SHEET_V2, context="completos")
+
+    # Validar columna id
+    for label, df in [
+        ("Swift_manuales V1", man_v1_ok),
+        ("Swift_manuales V2", man_v2_ok),
+        ("Swift_completos V1", comp_v1),
+        ("Swift_completos V2", comp_v2),
+    ]:
+        _ensure_id_column(df, label)
+
+    # Si no hay registros nuevos completos, retornar el estado actual
     if man_v1_ok.empty and man_v2_ok.empty:
-        LOGGER.info("No hay registros completos nuevos en Swift_manuales. Swift_completos queda igual.")
-        return comp_v1, comp_v2
+        LOGGER.info("No hay registros completos nuevos en Swift_manuales.")
+        return comp_v1, comp_v2, 0
 
-    ids_v1 = set(comp_v1["id"].astype(str)) if not comp_v1.empty else set()
-    ids_v2 = set(comp_v2["id"].astype(str)) if not comp_v2.empty else set()
+    def _merge_sin_duplicar(comp: pd.DataFrame, nuevos: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+        if nuevos.empty:
+            return comp, 0
+        ids_existentes = set(comp["id"].astype(str)) if not comp.empty else set()
+        to_add = nuevos.loc[~nuevos["id"].astype(str).isin(ids_existentes)].copy()
+        if to_add.empty:
+            return comp, 0
+        to_add["Estado"] = "Completo"
+        merged = pd.concat([comp, to_add], ignore_index=True) if not comp.empty else to_add
+        return merged, len(to_add)
 
-    add_v1 = man_v1_ok.loc[~man_v1_ok["id"].astype(str).isin(ids_v1)].copy()
-    add_v2 = man_v2_ok.loc[~man_v2_ok["id"].astype(str).isin(ids_v2)].copy()
+    new_comp_v1, added_v1 = _merge_sin_duplicar(comp_v1, man_v1_ok)
+    new_comp_v2, added_v2 = _merge_sin_duplicar(comp_v2, man_v2_ok)
+    total_movidos = added_v1 + added_v2
 
-    if not add_v1.empty:
-        add_v1["Estado"] = "Completo"
-    if not add_v2.empty:
-        add_v2["Estado"] = "Completo"
+    if total_movidos > 0:
+        write_sheets(
+            config.SWIFT_COMPLETOS,
+            {config.SHEET_V1: new_comp_v1, config.SHEET_V2: new_comp_v2},
+            context="paso_1_manuales",
+        )
+        LOGGER.info(
+            f"PASO 1 OK → movidos a Swift_completos: "
+            f"V1={added_v1} | V2={added_v2} | total={total_movidos}"
+        )
+    else:
+        LOGGER.info("PASO 1: Todos los registros completos ya existían en Swift_completos.")
 
-    new_comp_v1 = pd.concat([comp_v1, add_v1], ignore_index=True) if not add_v1.empty else comp_v1
-    new_comp_v2 = pd.concat([comp_v2, add_v2], ignore_index=True) if not add_v2.empty else comp_v2
-
-    write_swift_completos(new_comp_v1, new_comp_v2)
-
-    total_added = len(add_v1) + len(add_v2)
-    LOGGER.info(f"PASO 1 OK -> Agregados a Swift_completos: V1={len(add_v1)} | V2={len(add_v2)} | Total={total_added}")
-
-    # DEVOLVEMOS LA BASE YA ACTUALIZADA (clave para el paso 3)
-    return new_comp_v1, new_comp_v2
+    return new_comp_v1, new_comp_v2, total_movidos
 
 
 # =========================================================
-# PASO 2) Swift_completos -> Acumulado_swift
+# PASO 2) Swift_completos → Acumulado_swift (APPEND)
 # =========================================================
-def construir_df_para_acumulado(df_comp_v1: pd.DataFrame, df_comp_v2: pd.DataFrame) -> pd.DataFrame:
-    df_v1 = df_comp_v1.copy()
-    df_v2 = df_comp_v2.copy()
-
+def _paso_2_acumulado(df_v1: pd.DataFrame, df_v2: pd.DataFrame) -> None:
+    """Agrega a Acumulado_swift los registros nuevos de Swift_completos."""
+    df_v1 = df_v1.copy()
+    df_v2 = df_v2.copy()
     df_v1["Versión"] = "V1"
     df_v2["Versión"] = "V2"
 
     df_all = pd.concat([df_v1, df_v2], ignore_index=True)
 
-    ahora = datetime.now().strftime("%Y-%m-%d %H:%M")
-    df_all["Fecha Control"] = ahora
-    df_all["Formulario"] = ""
-    df_all["Llave"] = ""
-
     if "id" not in df_all.columns:
         raise KeyError("Swift_completos no tiene columna 'id'. Es obligatoria para el acumulado.")
 
-    df_all.columns = [str(c).strip() for c in df_all.columns]
-    df_all = ensure_columns(df_all, ACUMULADO_COLS)
-    return df_all
+    ahora = datetime.now().strftime("%Y-%m-%d %H:%M")
+    df_all["Fecha Control"] = ahora
 
+    df_all = ensure_columns(df_all, config.ACUMULADO_COLS)
+    df_new = df_all[config.ACUMULADO_COLS].copy()
 
-def append_acumulado(df_new: pd.DataFrame) -> None:
-    if ACUMULADO.exists():
-        df_old = pd.read_excel(ACUMULADO, sheet_name=ACUMULADO_SHEET)
-        df_old.columns = [str(c).strip() for c in df_old.columns]
-        df_old = ensure_columns(df_old, ACUMULADO_COLS)
+    if config.ACUMULADO_SWIFT.exists():
+        df_old = read_sheet_safe(
+            config.ACUMULADO_SWIFT, config.SHEET_ACUMULADO, context="acumulado"
+        )
+        df_old = ensure_columns(df_old, config.ACUMULADO_COLS)
 
         ids_old = set(df_old["id"].astype(str))
         df_to_add = df_new.loc[~df_new["id"].astype(str).isin(ids_old)].copy()
 
         if df_to_add.empty:
-            LOGGER.info("PASO 2 -> Acumulado: no hay nuevos registros (todos los id ya existen).")
+            LOGGER.info("PASO 2: Sin registros nuevos para acumulado (todos ya existen).")
             return
 
         df_final = pd.concat([df_old, df_to_add], ignore_index=True)
-        LOGGER.info(f"PASO 2 OK -> Acumulado agregados={len(df_to_add)} | total={len(df_final)}")
+        LOGGER.info(
+            f"PASO 2 OK → Acumulado: agregados={len(df_to_add)} | "
+            f"total={len(df_final)}"
+        )
     else:
         df_final = df_new.copy()
-        LOGGER.info(f"PASO 2 -> Acumulado no existe. Se crea nuevo con registros={len(df_final)}")
+        LOGGER.info(f"PASO 2: Acumulado creado con {len(df_final)} registros.")
 
-    with pd.ExcelWriter(ACUMULADO, engine="openpyxl", mode="w") as writer:
-        df_final.to_excel(writer, sheet_name=ACUMULADO_SHEET, index=False)
-
-    LOGGER.info(f"Acumulado actualizado: {ACUMULADO}")
+    write_sheets(
+        config.ACUMULADO_SWIFT,
+        {config.SHEET_ACUMULADO: df_final},
+        context="acumulado",
+    )
 
 
 # =========================================================
-# PASO 3) Swift_completos -> Plantillas Bancolombia (REEMPLAZA SIEMPRE)
+# TRANSFORMACIONES PARA PLANTILLAS BANCOLOMBIA
 # =========================================================
-def write_bancolombia_template_replace(df_source: pd.DataFrame, template_path: Path) -> None:
+def _recortar_nombre_personalizado(valor, limite: int = NOMBRE_PERSONALIZADO_LIMITE):
     """
-    REEMPLAZA la data del plano:
-    - No toca fila 1
-    - Encabezados en fila 2
-    - Limpia desde fila 3 hacia abajo
-    - Escribe desde fila 3
-    - No toca Observaciones
+    Recorta "Nombre personalizado" al límite de caracteres preservando el código
+    SWIFT (última palabra). Elimina palabras del nombre de derecha a izquierda
+    hasta que el texto completo quepa dentro del límite.
+
+    Ejemplos (limite=50):
+      "EMPRESA MUY LARGA CON NOMBRE EXTENSO BOFAUS3N"
+        → "EMPRESA MUY LARGA CON BOFAUS3N"   (si supera 50 chars)
+      "EMPRESA CORTA BOFAUS3N"
+        → sin cambio                          (ya dentro del límite)
+    """
+    if pd.isna(valor):
+        return valor
+    val = str(valor).strip()
+    if len(val) <= limite:
+        return val
+    partes = val.rsplit(" ", 1)
+    if len(partes) != 2:
+        return val
+    nombre, swift = partes[0], partes[1]
+    palabras = nombre.split(" ")
+    while len(" ".join(palabras) + " " + swift) > limite and len(palabras) > 1:
+        palabras.pop()
+    return " ".join(palabras) + " " + swift
+
+
+def _preparar_df_para_plantilla(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Aplica las transformaciones previas a la escritura en plantilla Bancolombia:
+      1. Solo registros Completos
+      2. Deduplicar filas exactas
+      3. Recortar "Nombre personalizado" a NOMBRE_PERSONALIZADO_LIMITE chars
+
+    Retorna el DataFrame listo para ser escrito desde fila 3.
+    """
+    out = df.copy()
+
+    # 1) Solo completos
+    if "Estado" in out.columns:
+        out = out.loc[out["Estado"] == "Completo"].copy()
+
+    # 2) Deduplicar
+    antes = len(out)
+    out = out.drop_duplicates()
+    duplicados = antes - len(out)
+    if duplicados:
+        LOGGER.info(f"Plantilla: {duplicados} filas duplicadas eliminadas.")
+
+    # 3) Recortar Nombre personalizado
+    if "Nombre personalizado" in out.columns:
+        recortados = 0
+        originales = out["Nombre personalizado"].copy()
+        out["Nombre personalizado"] = out["Nombre personalizado"].apply(
+            _recortar_nombre_personalizado
+        )
+        recortados = (out["Nombre personalizado"] != originales).sum()
+        if recortados:
+            LOGGER.info(
+                f"Plantilla: {recortados} nombres recortados "
+                f"a {NOMBRE_PERSONALIZADO_LIMITE} chars."
+            )
+
+    return out
+
+
+# =========================================================
+# PASO 3) Swift_completos → Plantillas Bancolombia (REEMPLAZA)
+# =========================================================
+def _write_bancolombia_template(df_source: pd.DataFrame, template_path: Path) -> None:
+    """
+    Escribe datos en la plantilla Bancolombia:
+      - Fila 1: logo/título (intocable)
+      - Fila 2: encabezados (intocable)
+      - Fila 3+: datos (REEMPLAZA completamente)
     """
     if not template_path.exists():
-        raise FileNotFoundError(f"No existe plantilla destino: {template_path}")
+        raise FileNotFoundError(
+            f"No existe la plantilla Bancolombia: {template_path}\n"
+            f"Verificá que la carpeta '{config.DIR_PLANTILLAS}' existe y tiene los archivos."
+        )
+
+    # Aplicar transformaciones: filtro completos + deduplicar + recortar nombres
+    df_write = _preparar_df_para_plantilla(df_source)
 
     wb = load_workbook(template_path)
     ws = wb.active
 
-    # Mapear headers (fila 2)
-    header_map = {}
-    for cell in ws[2]:
-        val = str(cell.value).strip() if cell.value is not None else ""
-        if val:
-            header_map[val] = cell.column
+    # Mapear encabezados de fila 2
+    header_map = {
+        str(cell.value).strip(): cell.column
+        for cell in ws[2]
+        if cell.value is not None
+    }
 
-    required = ["Cuenta compensación", "Nombre / Razón social", "País", "Ciudad", "Nombre personalizado"]
-    missing = [c for c in required if c not in header_map]
+    required_headers = [
+        "Cuenta compensación",
+        "Nombre / Razón social",
+        "País",
+        "Ciudad",
+        "Nombre personalizado",
+    ]
+    missing = [h for h in required_headers if h not in header_map]
     if missing:
-        raise KeyError(f"Plantilla {template_path.name} no tiene encabezados requeridos en fila 2: {missing}")
+        raise KeyError(
+            f"Plantilla {template_path.name} no tiene encabezados requeridos "
+            f"en fila 2: {missing}"
+        )
 
+    # Limpiar datos desde fila 3
     start_row = 3
-
-    # ✅ LIMPIAR SOLO DATOS DESDE FILA 3 (REEMPLAZO TOTAL)
     if ws.max_row >= start_row:
         ws.delete_rows(start_row, ws.max_row - start_row + 1)
 
-    # Escribir desde fila 3
-    current_row = start_row
-
-    # Si no hay data, igual dejamos el plano limpio (solo header)
-    if df_source.empty:
+    if df_write.empty:
         wb.save(template_path)
-        LOGGER.info(f"PASO 3 OK -> Plano limpio (sin registros): {template_path}")
+        LOGGER.info(f"PASO 3: Plantilla limpia (sin registros): {template_path.name}")
         return
 
-    for _, r in df_source.iterrows():
-        ws.cell(row=current_row, column=header_map["Cuenta compensación"]).value = CUENTA_COMPENSACION
+    for current_row, (_, r) in enumerate(df_write.iterrows(), start=start_row):
+        ws.cell(row=current_row, column=header_map["Cuenta compensación"]).value  = config.CUENTA_COMPENSACION
         ws.cell(row=current_row, column=header_map["Nombre / Razón social"]).value = r.get("Proveedor", "")
-        ws.cell(row=current_row, column=header_map["País"]).value = r.get("Pais", "")
-        ws.cell(row=current_row, column=header_map["Ciudad"]).value = r.get("Ciudad", "")
-        ws.cell(row=current_row, column=header_map["Nombre personalizado"]).value = r.get("Nombre personalizado", "")
-        current_row += 1
+        ws.cell(row=current_row, column=header_map["País"]).value                  = r.get("Pais", "")
+        ws.cell(row=current_row, column=header_map["Ciudad"]).value                = r.get("Ciudad", "")
+        ws.cell(row=current_row, column=header_map["Nombre personalizado"]).value  = r.get("Nombre personalizado", "")
 
     wb.save(template_path)
-    LOGGER.info(f"PASO 3 OK -> Plano reemplazado: {template_path}")
+    LOGGER.info(
+        f"PASO 3 OK → Plantilla actualizada: {template_path.name} "
+        f"({len(df_write)} registros desde fila 3)"
+    )
 
 
-def paso_3_trasladar_a_plantillas(df_comp_v1: pd.DataFrame, df_comp_v2: pd.DataFrame) -> None:
-    # Por seguridad: solo completos
-    df_v1 = df_comp_v1.copy()
-    df_v2 = df_comp_v2.copy()
-
-    if "Estado" in df_v1.columns:
-        df_v1 = df_v1.loc[df_v1["Estado"] == "Completo"].copy()
-    if "Estado" in df_v2.columns:
-        df_v2 = df_v2.loc[df_v2["Estado"] == "Completo"].copy()
-
-    write_bancolombia_template_replace(df_v1, DESTINO_V1)
-    write_bancolombia_template_replace(df_v2, DESTINO_V2)
+def _paso_3_plantillas(df_v1: pd.DataFrame, df_v2: pd.DataFrame) -> None:
+    """Escribe las plantillas Bancolombia V1 y V2."""
+    _write_bancolombia_template(df_v1, config.PLANTILLA_V1)
+    _write_bancolombia_template(df_v2, config.PLANTILLA_V2)
 
 
 # =========================================================
-# MAIN (orden exacto)
+# FUNCIÓN PRINCIPAL — llamada desde main.py
 # =========================================================
-def main():
-    LOGGER.info("=== INICIO POST VALIDACIÓN (PASO 1 + PASO 2 + PASO 3) ===")
+def run_post_validacion() -> dict:
+    """
+    Ejecuta los 3 pasos de post validación.
 
-    # PASO 1 -> obtenemos Swift_completos ya ACTUALIZADO
-    df_comp_v1, df_comp_v2 = paso_1_mover_manuales_a_completos()
+    Retorna dict con estadísticas:
+        movidos, acumulado_total
+    """
+    LOGGER.info("=== INICIO POST VALIDACIÓN ===")
 
-    # PASO 2 -> Acumulado basado en Swift_completos actualizado
-    df_acum = construir_df_para_acumulado(df_comp_v1, df_comp_v2)
-    append_acumulado(df_acum)
+    # Paso 1: Mover manuales completos → Swift_completos
+    df_comp_v1, df_comp_v2, total_movidos = _paso_1_mover_manuales()
 
-    # PASO 3 -> Planos REEMPLAZAN usando Swift_completos actualizado
-    paso_3_trasladar_a_plantillas(df_comp_v1, df_comp_v2)
+    # Paso 2: Acumulado
+    if not df_comp_v1.empty or not df_comp_v2.empty:
+        _paso_2_acumulado(df_comp_v1, df_comp_v2)
+    else:
+        LOGGER.info("PASO 2: Swift_completos vacío, se omite acumulado.")
 
-    LOGGER.info("=== FIN POST VALIDACIÓN ===")
+    # Paso 3: Plantillas Bancolombia
+    try:
+        _paso_3_plantillas(df_comp_v1, df_comp_v2)
+    except FileNotFoundError as e:
+        LOGGER.warning(f"PASO 3 omitido: {e}")
 
-
-if __name__ == "__main__":
-    main()
+    LOGGER.info(f"=== FIN POST VALIDACIÓN ===  Movidos={total_movidos}")
+    return {"movidos": total_movidos}
