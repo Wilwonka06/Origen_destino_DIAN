@@ -50,24 +50,14 @@ DIR_PLANTILLAS: Path = BASE_ROOT / "plantillas"
 
 # =========================================================
 # FUENTE DE PDFs SWIFT (red corporativa)
-# =========================================================
-# El año se toma automáticamente del sistema — no hay que tocar código cada enero.
-SWIFT_AÑO: int = date.today().year
 
-# Ruta raíz donde viven las subcarpetas de mes y día.
-# Estructura esperada:
-#   DIR_SWIFT_RAIZ / "3. MARZO" / "19 MARZO" / *.pdf
-#   DIR_SWIFT_RAIZ / "11. NOVIEMBRE" / "19 NOVIEMBRE" / *.pdf
+SWIFT_AÑO: int = 2025 #date.today().year
+
 DIR_SWIFT_RAIZ: Path = Path(r"O:\Comercio Exterior\Importaciones\CONTROL DE PAGOS") / f"CONTROL DE PAGOS {SWIFT_AÑO}" / "SWIFT" / "COMODIN"
 
-# Fecha de inicio: PDFs en carpetas ANTERIORES a esta fecha se ignoran.
-# Punto de partida del procesamiento — no tocar salvo que cambie el año base.
 SWIFT_FECHA_DESDE: date = date(2025, 4, 1)        # 1 de abril 2025
 
-# Fecha de corte: PDFs en carpetas de días ANTERIORES a esta fecha → V1
-#                PDFs en carpetas de días DESDE esta fecha en adelante → V2
-# Ajustar si el criterio cambia en futuros años.
-SWIFT_CORTE_V2: date = date(SWIFT_AÑO, 11, 20)   # 20 de noviembre
+SWIFT_CORTE_V2: date = date(SWIFT_AÑO, 11, 26)   # 26 de noviembre  ← FIX
 
 # Carpetas locales opcionales: se usan si DIR_SWIFT_RAIZ no existe
 # (útil para pruebas offline o ejecución sin red).
@@ -126,6 +116,7 @@ OD2_COL_LLAVE_OD    = "Llave Origen Destino"
 OCR_LANG   = "eng"
 OCR_CONFIG = r"--oem 3 --psm 6"
 OCR_DPI    = 300
+OCR_MIN_NATIVE_CHARS: int = 99999  # ← FIX: fuerza siempre OCR
 
 # =========================================================
 # PARÁMETROS DE MATCHING Y VALIDACIÓN

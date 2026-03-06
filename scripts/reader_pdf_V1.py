@@ -15,6 +15,12 @@ CAMBIOS vs versión anterior:
   - Mantenida: toda la lógica de regex y extracción de campos (sin cambios)
   - Agregado:  soporte de caché (process_folder recibe cache opcional)
   - Agregado:  retorno de estado por PDF para PipelineResult
+
+FIX aplicado:
+  - _extract_amount_from_window: restaurada la preservación del separador decimal
+    europeo (30.449,84). La versión refactorizada hacía replace(",", "") destruyendo
+    el separador → clean_amount_value en el pipeline recibe el valor original intacto
+    y hace la normalización final correctamente.
 """
 
 from __future__ import annotations
@@ -115,6 +121,30 @@ def _parse_dd_mon_yyyy_robust(raw: str) -> Optional[str]:
 
 
 # =========================================================
+# NORMALIZACIÓN DE AMOUNT (V1)
+# =========================================================
+def _fix_amount_value(amount_value: str) -> str:
+    """
+    Preserva el valor tal como viene del OCR, solo corrige casos incompletos:
+      - "30.449,84"  → "30.449,84"  (sin cambios — clean_amount_value lo normaliza después)
+      - "26.550,"    → "26.550,00"  (coma final sin decimales)
+      - "26.550."    → "26.550.00"  (punto final sin decimales)
+
+    FIX: la versión anterior hacía replace(",", "") destruyendo el separador
+    decimal europeo antes de que clean_amount_value pudiera interpretarlo.
+    Ahora se preserva el valor original y se delega la normalización al pipeline.
+    """
+    v = (amount_value or "").strip().replace("\u00A0", " ")
+    v = re.sub(r"\s+", " ", v).strip()
+
+    # Coma o punto final sin decimales → agregar "00"
+    if re.search(r"[,\.]\s*$", v):
+        v = re.sub(r"[,\.]\s*$", lambda m: m.group() + "00", v)
+
+    return v
+
+
+# =========================================================
 # EXTRACCIÓN DE CAMPOS
 # =========================================================
 def _extract_receiver(ocr_text: str) -> Optional[str]:
@@ -138,46 +168,57 @@ def _extract_receiver(ocr_text: str) -> Optional[str]:
 
 
 def _extract_amount_from_window(window: List[str], debug: bool = False) -> Optional[str]:
+    """
+    Extrae el monto de la ventana de líneas del bloque 32A o 33B.
+
+    FIX: se restauró _fix_amount_value() que preserva el separador decimal
+    europeo (ej: "30.449,84") en lugar de destruirlo con replace(",", "").
+    La normalización final a formato numérico la hace clean_amount_value()
+    en el paso de post-proceso del pipeline.
+    """
     full = " ".join(window)
 
     # Intento 1: Amount entre # ... #
     m = RE_AMOUNT_HASH_STRICT.search(full)
     if m:
-        raw = m.group(1).strip().replace("\u00A0", "").replace(",", "")
-        raw = re.sub(r"\s+", "", raw)
+        raw = m.group(1).strip()
+        fixed = _fix_amount_value(raw)   # FIX: preserva separador europeo
         if debug:
-            LOGGER.debug(f"Amount hash strict: {repr(raw)}")
-        return raw if raw else None
+            LOGGER.debug(f"Amount hash strict: {repr(raw)} → {repr(fixed)}")
+        return fixed if fixed else None
 
     # Intento 2: cualquier par # ... #
     m2 = RE_ANY_HASH_TOKEN.search(full)
     if m2:
-        raw = m2.group(1).strip().replace("\u00A0", "").replace(",", "")
-        raw = re.sub(r"\s+", "", raw)
+        raw = m2.group(1).strip()
         if re.search(r"\d", raw):
+            fixed = _fix_amount_value(raw)   # FIX: preserva separador europeo
             if debug:
-                LOGGER.debug(f"Amount hash fallback: {repr(raw)}")
-            return raw
+                LOGGER.debug(f"Amount hash fallback: {repr(raw)} → {repr(fixed)}")
+            return fixed
 
     # Intento 3: primera línea con solo dígitos y separadores
     for ln in window:
-        clean = ln.strip().replace("\u00A0", "").replace(",", "")
+        clean = ln.strip().replace("\u00A0", "")
         clean = re.sub(r"\s+", "", clean)
-        if re.match(r"^[\d\.]+$", clean) and len(clean) >= 3:
+        # Acepta formatos EU (1.234,56) y US (1,234.56)
+        if re.match(r"^[\d\.,]+$", clean) and len(clean) >= 3:
+            fixed = _fix_amount_value(clean)   # FIX: preserva separador europeo
             if debug:
-                LOGGER.debug(f"Amount numérico directo: {repr(clean)}")
-            return clean
+                LOGGER.debug(f"Amount numérico directo: {repr(clean)} → {repr(fixed)}")
+            return fixed
 
     # Intento 4 (fallback): primer token numérico
     for ln in window:
         m3 = re.search(r"([0-9][0-9\.,\s]*)", ln)
         if m3:
-            raw = m3.group(1).strip().replace("\u00A0", "").replace(",", "")
+            raw = m3.group(1).strip()
             raw = re.sub(r"\s+", "", raw)
             if len(raw) >= 3:
+                fixed = _fix_amount_value(raw)   # FIX: preserva separador europeo
                 if debug:
-                    LOGGER.debug(f"Amount fallback raw: {repr(raw)}")
-                return raw
+                    LOGGER.debug(f"Amount fallback raw: {repr(raw)} → {repr(fixed)}")
+                return fixed
 
     return None
 
@@ -400,7 +441,6 @@ def process_folder(
     Retorna lista de dicts con los datos extraídos de cada PDF.
     """
     if isinstance(input_folder, list):
-        # Lista de rutas individuales (descubiertas por _descubrir_pdfs_por_version)
         pdf_files = sorted(input_folder, key=lambda p: p.name)
         if cache is not None:
             pdf_files = [p for p in pdf_files if not cache.is_processed(p)]

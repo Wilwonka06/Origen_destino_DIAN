@@ -5,12 +5,12 @@ main.py — Orquestador del pipeline Origen_Destino_DIAN
 Punto de entrada único para ejecutar cualquier parte del flujo.
 
 MODOS DE EJECUCIÓN:
-  python main.py                    → pipeline completo
-  python main.py --modo ocr         → solo extracción OCR de PDFs
-  python main.py --modo cruces      → solo cruce formulario + llave
-  python main.py --modo post        → mover manuales corregidos a completos
-  python main.py --modo post_auto   → igual que post pero sin pedir confirmación
-  python main.py --forzar           → ignora caché, reprocesa todos los PDFs
+  1. python main.py                    → pipeline completo
+  2. python main.py --modo ocr         → solo extracción OCR de PDFs
+  3. python main.py --modo post        → mover manuales corregidos a completos
+  4. python main.py --modo post_auto   → igual que post pero sin pedir confirmación
+  5. python main.py --modo cruces      → solo cruce formulario + llave
+  6. python main.py --forzar           → ignora caché, reprocesa todos los PDFs
 
 DISEÑADO PARA GUI:
   Cada modo retorna un PipelineResult con toda la información

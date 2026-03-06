@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import os
 import shutil
-import logging
 from pathlib import Path
 from typing import Optional
 
@@ -84,15 +83,24 @@ class OcrEngine:
       - Configuración de Tesseract (lang, config, DPI)
       - Extracción de texto desde PDF (pdfplumber primero, OCR como fallback)
       - Renderizado de páginas a imagen para OCR
+
+    NOTA sobre min_native_chars:
+      Controla el umbral de caracteres nativos (pdfplumber) por debajo del cual
+      se activa el OCR. Todos los regex del proyecto fueron calibrados contra
+      salida de Tesseract, por lo que se recomienda mantener este valor alto
+      (config.OCR_MIN_NATIVE_CHARS = 99999) para forzar siempre OCR.
+      Solo reducirlo si los regex se revalidan contra texto nativo de pdfplumber.
     """
 
-    def __init__(self, lang: str, config: str, dpi: int) -> None:
-        self.lang   = lang
-        self.config = config
-        self.dpi    = dpi
-        self._tesseract_cmd = _resolve_tesseract_cmd()
+    def __init__(self, lang: str, config: str, dpi: int, min_native_chars: int = 99999) -> None:
+        self.lang             = lang
+        self.config           = config
+        self.dpi              = dpi
+        self.min_native_chars = min_native_chars   # FIX: configurable desde config.py
+        self._tesseract_cmd   = _resolve_tesseract_cmd()
         pytesseract.pytesseract.tesseract_cmd = self._tesseract_cmd
         LOGGER.info(f"Tesseract encontrado: {self._tesseract_cmd}")
+        LOGGER.info(f"OCR engine: lang={lang} | dpi={dpi} | min_native_chars={min_native_chars}")
 
     # ----------------------------------------------------------
     # Extracción principal: texto nativo → OCR como fallback
@@ -107,8 +115,9 @@ class OcrEngine:
         Retorna lista de strings, uno por página.
 
         Estrategia por página:
-          1. pdfplumber (texto nativo) → si tiene suficiente texto, lo usa
-          2. OCR con Tesseract (fallback para PDFs escaneados)
+          1. pdfplumber (texto nativo) → si supera min_native_chars, lo usa
+          2. OCR con Tesseract (fallback para PDFs escaneados o cuando
+             min_native_chars es muy alto, que es el caso por defecto)
         """
         if not pdf_path.exists():
             raise FileNotFoundError(f"PDF no encontrado: {pdf_path}")
@@ -141,20 +150,23 @@ class OcrEngine:
     ) -> Optional[str]:
         """
         Extrae texto de una página individual.
-        Prioriza texto nativo; usa OCR si el texto nativo es escaso.
-        """
-        MIN_NATIVE_CHARS = 50  # umbral: si hay menos chars nativos, usar OCR
 
-        # Intento 1: texto nativo con pdfplumber
+        Prioriza texto nativo solo si supera self.min_native_chars.
+        Con el valor por defecto (99999), siempre usa OCR — comportamiento
+        equivalente a las versiones originales de reader_pdf_V1 y reader_pdf_V2.
+        """
         native_text = page.extract_text() or ""
-        if len(native_text.strip()) >= MIN_NATIVE_CHARS:
+        if len(native_text.strip()) >= self.min_native_chars:
             if debug:
                 LOGGER.debug(f"  Página {page_num + 1}: texto nativo ({len(native_text)} chars)")
             return native_text
 
-        # Intento 2: OCR
+        # OCR: cubre tanto PDFs escaneados como digitales (cuando min_native_chars es alto)
         if debug:
-            LOGGER.debug(f"  Página {page_num + 1}: texto nativo insuficiente ({len(native_text.strip())} chars) → OCR")
+            LOGGER.debug(
+                f"  Página {page_num + 1}: texto nativo insuficiente "
+                f"({len(native_text.strip())} chars < {self.min_native_chars}) → OCR"
+            )
 
         return self._ocr_page(page, page_num, debug)
 
@@ -203,12 +215,14 @@ def get_ocr_engine() -> OcrEngine:
                 lang=config.OCR_LANG,
                 config=config.OCR_CONFIG,
                 dpi=config.OCR_DPI,
+                min_native_chars=config.OCR_MIN_NATIVE_CHARS,  # FIX: lee desde config
             )
         except ImportError:
-            # Fallback con valores por defecto
+            # Fallback con valores por defecto — fuerza OCR igual que el comportamiento original
             _ocr_engine_instance = OcrEngine(
                 lang="eng",
                 config=r"--oem 3 --psm 6",
                 dpi=300,
+                min_native_chars=99999,  # FIX: fuerza siempre OCR
             )
     return _ocr_engine_instance
