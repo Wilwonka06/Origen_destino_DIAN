@@ -2,198 +2,291 @@
 """
 core/excel_utils.py — Utilidades Excel centralizadas
 
-Uso en cualquier script:
-    from core.excel_utils import read_sheet_safe, write_sheets, append_to_sheet
+Regla de oro:
+  - LECTURA  → pandas read_excel  (rápido, no modifica el archivo)
+  - ESCRITURA de archivos nuevos / reemplazados totalmente
+              → pd.ExcelWriter con engine="openpyxl"  (crea archivo limpio)
+  - ESCRITURA de archivos pre-existentes donde solo hay que tocar
+    algunas celdas (origenDestino, plantillas Bancolombia)
+              → load_workbook + wb.save()  (preserva formatos y fechas)
 
-Propósito:
-  - Manejo de errores robusto al leer/escribir Excel
-  - Evitar repetir try/except en cada script
-  - Mensajes de error descriptivos
+Funciones públicas
+──────────────────
+read_sheet_safe(path, sheet_name, context)  → pd.DataFrame
+write_sheets(path, sheets, context)         → None
+write_cells(path, sheet_name, cell_updates) → None   ← nuevo
+ensure_columns(df, cols)                    → pd.DataFrame
+reorder_columns(df, cols)                   → pd.DataFrame
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import pandas as pd
 
-from core.logger import get_logger
+# openpyxl se importa localmente donde se necesita para evitar
+# cargarlo si solo se usa read_sheet_safe
 
-LOGGER = get_logger(__name__)
+__all__ = [
+    "read_sheet_safe",
+    "write_sheets",
+    "write_cells",
+    "ensure_columns",
+    "reorder_columns",
+]
 
 
 # =========================================================
-# LECTURA SEGURA
+# LECTURA
 # =========================================================
-
 def read_sheet_safe(
     path: Path,
     sheet_name: str,
     context: str = "",
+    dtype: Optional[Dict] = None,
 ) -> pd.DataFrame:
     """
     Lee una hoja de Excel de forma segura.
 
-    Si el archivo o la hoja no existe, retorna DataFrame vacío y loguea warning
-    en lugar de lanzar excepción (útil para archivos que se crean en el primer run).
+    - Si el archivo no existe → retorna DataFrame vacío (no lanza error).
+    - Si la hoja no existe   → retorna DataFrame vacío (no lanza error).
+    - Siempre normaliza nombres de columnas (quita espacios y nbsp).
 
-    Para archivos que DEBEN existir, usar validate_input_files() antes.
-
-    Retorna: DataFrame (vacío si no existe el archivo o la hoja)
+    Usa pd.read_excel (solo lectura → no toca el archivo, sin riesgo de
+    alterar formatos).
     """
-    prefix = f"[{context}] " if context else ""
+    tag = f"[{context}] " if context else ""
 
-    if not path.exists():
-        LOGGER.warning(f"{prefix}Archivo no encontrado: {path.name} → retorna DataFrame vacío")
+    if not Path(path).exists():
         return pd.DataFrame()
 
     try:
-        df = pd.read_excel(path, sheet_name=sheet_name)
-        # Limpiar nombres de columnas (quitar espacios, NBSP)
-        df.columns = [str(c).replace("\u00A0", " ").strip() for c in df.columns]
-        LOGGER.debug(f"{prefix}Leído {path.name}[{sheet_name}]: {len(df)} filas")
-        return df
-    except ValueError as e:
-        # La hoja no existe en el archivo
-        LOGGER.warning(f"{prefix}Hoja '{sheet_name}' no encontrada en {path.name}: {e} → retorna DataFrame vacío")
-        return pd.DataFrame()
+        df = pd.read_excel(
+            path,
+            sheet_name=sheet_name,
+            dtype=dtype,
+            engine=_engine_for(path),
+        )
     except Exception as e:
-        LOGGER.error(f"{prefix}Error al leer {path.name}[{sheet_name}]: {e}")
-        raise
+        err = str(e).lower()
+        if "worksheet" in err or "sheet" in err or "no sheet" in err:
+            return pd.DataFrame()
+        raise RuntimeError(
+            f"{tag}No se pudo leer '{sheet_name}' de {Path(path).name}: {e}"
+        ) from e
+
+    # Normalizar encabezados
+    df.columns = [str(c).replace("\u00A0", " ").strip() for c in df.columns]
+    return df
 
 
-def read_all_sheets(path: Path, context: str = "") -> Dict[str, pd.DataFrame]:
-    """
-    Lee todas las hojas de un Excel.
-    Retorna dict {nombre_hoja: DataFrame}.
-    """
-    prefix = f"[{context}] " if context else ""
-
-    if not path.exists():
-        LOGGER.warning(f"{prefix}Archivo no encontrado: {path.name} → retorna dict vacío")
-        return {}
-
-    try:
-        sheets = pd.read_excel(path, sheet_name=None)
-        # Limpiar columnas de cada hoja
-        for name, df in sheets.items():
-            df.columns = [str(c).replace("\u00A0", " ").strip() for c in df.columns]
-        LOGGER.debug(f"{prefix}Leído {path.name}: {list(sheets.keys())}")
-        return sheets
-    except Exception as e:
-        LOGGER.error(f"{prefix}Error al leer {path.name}: {e}")
-        raise
+def _engine_for(path: Path) -> Optional[str]:
+    """Devuelve el engine correcto según la extensión."""
+    suffix = Path(path).suffix.lower()
+    if suffix == ".xlsb":
+        return "pyxlsb"
+    if suffix in (".xlsx", ".xlsm", ".xltx"):
+        return "openpyxl"
+    return None  # pandas elige automáticamente
 
 
 # =========================================================
-# ESCRITURA SEGURA
+# ESCRITURA COMPLETA (archivos nuevos o reemplazados totalmente)
 # =========================================================
-
 def write_sheets(
     path: Path,
     sheets: Dict[str, pd.DataFrame],
     context: str = "",
 ) -> None:
     """
-    Escribe múltiples hojas en un Excel, reemplazando el archivo completo.
+    Escribe uno o varios DataFrames en un archivo Excel.
+
+    Comportamiento:
+      - Si el archivo no existe → lo crea.
+      - Si el archivo existe    → reemplaza SOLO las hojas indicadas,
+        preserva las demás hojas.
+      - Engine siempre openpyxl (no xlwt, no xlsxwriter).
+      - Columnas normalizadas en los encabezados.
 
     Uso:
-        write_sheets(config.SWIFT_COMPLETOS, {"V1": df_v1, "V2": df_v2})
+        write_sheets(
+            config.SWIFT_COMPLETOS,
+            {config.SHEET_V1: df_v1, config.SHEET_V2: df_v2},
+            context="completos",
+        )
 
-    El directorio se crea automáticamente si no existe.
+    ⚠ Esta función reescribe las hojas indicadas completamente.
+      Para modificar celdas individuales en un archivo pre-existente
+      (preservando formatos de fecha, números, etc.) usar write_cells().
     """
-    prefix = f"[{context}] " if context else ""
+    tag  = f"[{context}] " if context else ""
+    path = Path(path)
+
     path.parent.mkdir(parents=True, exist_ok=True)
 
     try:
-        with pd.ExcelWriter(path, engine="openpyxl", mode="w") as writer:
+        mode           = "a" if path.exists() else "w"
+        if_sheet_exists = "replace" if mode == "a" else None
+
+        writer_kwargs = dict(engine="openpyxl", mode=mode)
+        if if_sheet_exists:
+            writer_kwargs["if_sheet_exists"] = if_sheet_exists
+
+        with pd.ExcelWriter(path, **writer_kwargs) as writer:
             for sheet_name, df in sheets.items():
-                df.to_excel(writer, sheet_name=sheet_name, index=False)
-                LOGGER.debug(f"{prefix}Hoja escrita: {sheet_name} ({len(df)} filas)")
-        LOGGER.info(f"{prefix}Excel guardado: {path.name} ({list(sheets.keys())})")
-    except Exception as e:
-        LOGGER.error(f"{prefix}Error al guardar {path.name}: {e}")
-        raise
+                safe_df = df.copy()
+                safe_df.columns = [
+                    str(c).replace("\u00A0", " ").strip()
+                    for c in safe_df.columns
+                ]
+                safe_df.to_excel(writer, sheet_name=sheet_name, index=False)
+
+    except PermissionError:
+        raise PermissionError(
+            f"\n{'='*60}\n"
+            f"  {tag}No se pudo guardar {path.name} — está abierto en Excel.\n"
+            f"  Cerralo y volvé a ejecutar.\n"
+            f"  Ruta: {path}\n"
+            f"{'='*60}"
+        )
 
 
-def append_to_sheet(
+# =========================================================
+# ESCRITURA DE CELDAS INDIVIDUALES (archivos pre-existentes)
+# =========================================================
+def write_cells(
     path: Path,
     sheet_name: str,
-    df_new: pd.DataFrame,
-    id_col: str = "id",
+    cell_updates: List[Tuple[int, int, object]],
+    create_header_if_missing: Optional[Tuple[int, int, str]] = None,
     context: str = "",
-) -> int:
+) -> None:
     """
-    Agrega filas a una hoja Excel sin duplicar por id_col.
+    Escribe SOLO las celdas indicadas en un archivo Excel pre-existente.
 
-    Si el archivo no existe, lo crea con las filas nuevas.
-    Si la hoja no existe, la crea.
-    Si ya existen filas con el mismo id, las omite.
+    Usa load_workbook + wb.save() → preserva 100% formatos, fechas
+    y tipos de datos del resto del archivo.
 
-    Retorna: número de filas efectivamente agregadas.
+    Parámetros:
+        path            : ruta al archivo Excel
+        sheet_name      : nombre de la hoja a modificar
+        cell_updates    : lista de (row, col, value)  — 1-indexado
+        create_header_if_missing:
+                          (row, col, header_text) — si la columna no existe,
+                          la crea con ese encabezado en esa celda.
+        context         : string para mensajes de error/log
+
+    Ejemplo:
+        write_cells(
+            config.ORIGEN_DESTINO,
+            "Origen y destino",
+            [(15, 11, "mi-llave-abc123"), (16, 11, "otra-llave")],
+        )
+
+    ⚠ No usar para archivos que se crean de cero; usar write_sheets() en su lugar.
     """
-    prefix = f"[{context}] " if context else ""
+    from openpyxl import load_workbook
 
-    if df_new.empty:
-        LOGGER.info(f"{prefix}append_to_sheet: df_new vacío, nada que agregar")
-        return 0
+    tag  = f"[{context}] " if context else ""
+    path = Path(path)
 
-    df_existing = read_sheet_safe(path, sheet_name, context=context)
+    if not path.exists():
+        raise FileNotFoundError(f"{tag}Archivo no encontrado: {path}")
 
-    if not df_existing.empty and id_col in df_existing.columns and id_col in df_new.columns:
-        existing_ids = set(df_existing[id_col].astype(str))
-        df_to_add = df_new[~df_new[id_col].astype(str).isin(existing_ids)].copy()
-    else:
-        df_to_add = df_new.copy()
+    try:
+        wb = load_workbook(path)
+    except PermissionError:
+        raise PermissionError(
+            f"\n{'='*60}\n"
+            f"  {tag}No se pudo abrir {path.name} — está abierto en Excel.\n"
+            f"  Cerralo y volvé a ejecutar.\n"
+            f"  Ruta: {path}\n"
+            f"{'='*60}"
+        )
 
-    if df_to_add.empty:
-        LOGGER.info(f"{prefix}append_to_sheet: todos los registros ya existen en {path.name}[{sheet_name}]")
-        return 0
+    if sheet_name not in wb.sheetnames:
+        raise KeyError(
+            f"{tag}Hoja '{sheet_name}' no encontrada en {path.name}. "
+            f"Hojas disponibles: {wb.sheetnames}"
+        )
 
-    if not df_existing.empty:
-        df_final = pd.concat([df_existing, df_to_add], ignore_index=True)
-    else:
-        df_final = df_to_add.copy()
+    ws = wb[sheet_name]
 
-    # Si el archivo ya existe y tiene otras hojas, preservarlas
-    if path.exists():
-        try:
-            all_sheets = read_all_sheets(path, context=context)
-        except Exception:
-            all_sheets = {}
-    else:
-        all_sheets = {}
+    if create_header_if_missing:
+        h_row, h_col, h_text = create_header_if_missing
+        if ws.cell(row=h_row, column=h_col).value is None:
+            ws.cell(row=h_row, column=h_col, value=h_text)
 
-    all_sheets[sheet_name] = df_final
-    write_sheets(path, all_sheets, context=context)
+    for row, col, value in cell_updates:
+        ws.cell(row=row, column=col, value=value)
 
-    added = len(df_to_add)
-    LOGGER.info(f"{prefix}append_to_sheet: {added} filas nuevas agregadas a {path.name}[{sheet_name}]")
-    return added
+    try:
+        wb.save(path)
+    except PermissionError:
+        raise PermissionError(
+            f"\n{'='*60}\n"
+            f"  {tag}No se pudo guardar {path.name} — está abierto en Excel.\n"
+            f"  Cerralo y volvé a ejecutar.\n"
+            f"  Ruta: {path}\n"
+            f"{'='*60}"
+        )
 
 
 # =========================================================
-# UTILIDADES DE COLUMNAS
+# UTILIDADES DE DataFrame
 # =========================================================
-
-def ensure_columns(df: pd.DataFrame, cols: list[str], fill_value=None) -> pd.DataFrame:
+def ensure_columns(df: pd.DataFrame, cols: Sequence[str]) -> pd.DataFrame:
     """
-    Asegura que el DataFrame tenga todas las columnas requeridas.
-    Agrega las faltantes con fill_value (None por defecto).
+    Garantiza que el DataFrame tenga todas las columnas en `cols`.
+    Las que falten se agregan vacías (pd.NA).
+    Las columnas extras se conservan.
     """
     out = df.copy()
-    for c in cols:
-        if c not in out.columns:
-            out[c] = fill_value
+    for col in cols:
+        if col not in out.columns:
+            out[col] = pd.NA
     return out
 
 
-def reorder_columns(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
+def reorder_columns(df: pd.DataFrame, cols: Sequence[str]) -> pd.DataFrame:
     """
-    Reordena el DataFrame según la lista de columnas.
-    Primero agrega las que faltan, luego reordena.
-    Solo incluye columnas que estén en 'cols'.
+    Reordena el DataFrame para que las columnas sigan el orden de `cols`.
+
+    - Las columnas de `cols` que faltan en df se agregan vacías (pd.NA).
+    - Las columnas de df que no están en `cols` se agregan al final.
     """
-    out = ensure_columns(df, cols)
-    return out[cols].copy()
+    out = df.copy()
+    for col in cols:
+        if col not in out.columns:
+            out[col] = pd.NA
+
+    extras = [c for c in out.columns if c not in cols]
+    return out[list(cols) + extras]
+
+
+# =========================================================
+# LEER COLUMNAS DE UN XLSX SIN CARGAR TODOS LOS DATOS
+# =========================================================
+def get_sheet_headers(path: Path, sheet_name: str) -> Dict[str, int]:
+    """
+    Retorna {nombre_columna: numero_columna_1indexed} leyendo solo la fila 1.
+    Usa openpyxl directamente → más rápido que leer todo el sheet con pandas.
+    Normaliza headers (quita nbsp y espacios).
+    """
+    from openpyxl import load_workbook
+
+    wb = load_workbook(path, read_only=True, data_only=True)
+    if sheet_name not in wb.sheetnames:
+        wb.close()
+        raise KeyError(f"Hoja '{sheet_name}' no encontrada en {Path(path).name}.")
+
+    ws   = wb[sheet_name]
+    hdrs = {}
+    for cell in next(ws.iter_rows(min_row=1, max_row=1)):
+        if cell.value is not None:
+            key = str(cell.value).replace("\u00A0", " ").strip()
+            hdrs[key] = cell.column
+    wb.close()
+    return hdrs

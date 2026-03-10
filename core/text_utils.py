@@ -56,6 +56,59 @@ def normalize_text_key(s: str | None) -> str:
 
 
 # =========================================================
+# NORMALIZACIÓN DE FORMAS SOCIETARIAS
+# =========================================================
+# Patrones ordenados de más largo a más corto para evitar matches parciales.
+# Se compilan una sola vez al importar el módulo.
+_FORMAS_SOCIETARIAS_PATTERNS: list[tuple] = [
+    (re.compile(r'\bS\.A\.S\.(?!\w)',                          re.IGNORECASE), 'S.A.S.'),  # ya correcto
+    (re.compile(r'\bS[\s\.]*A[\s\.]*S[\s\.]*(?!\.|[A-Z0-9])', re.IGNORECASE), 'S.A.S.'),
+    (re.compile(r'\bS\.A\.C\.(?!\w)',                          re.IGNORECASE), 'S.A.C.'),
+    (re.compile(r'\bS[\s\.]*A[\s\.]*C[\s\.]*(?!\.|[A-Z0-9])', re.IGNORECASE), 'S.A.C.'),
+    (re.compile(r'\bS\.R\.L\.(?!\w)',                          re.IGNORECASE), 'S.R.L.'),
+    (re.compile(r'\bS[\s\.]*R[\s\.]*L[\s\.]*(?!\.|[A-Z0-9])', re.IGNORECASE), 'S.R.L.'),
+    (re.compile(r'\bS\.A\.(?!\w)',                             re.IGNORECASE), 'S.A.'),    # ya correcto
+    (re.compile(r'\bS[\s\.]*A[\s\.]*(?!\.|\w)',                re.IGNORECASE), 'S.A.'),
+    (re.compile(r'\bB\.V\.(?!\w)',                             re.IGNORECASE), 'B.V.'),
+    (re.compile(r'\bB[\s\.]*V[\s\.]*(?!\.|[A-Z0-9])',         re.IGNORECASE), 'B.V.'),
+    (re.compile(r'\bN\.V\.(?!\w)',                             re.IGNORECASE), 'N.V.'),
+    (re.compile(r'\bN[\s\.]*V[\s\.]*(?!\.|[A-Z0-9])',         re.IGNORECASE), 'N.V.'),
+]
+_RE_FORMA_BIC_PEGADO = re.compile(r'(\.)([A-Z]{4}[A-Z0-9]{2}[A-Z0-9]{2})')
+
+
+def corregir_forma_societaria(nombre: str | None) -> str:
+    """
+    Normaliza formas societarias al formato canónico con puntos.
+
+    Convierte variantes sin puntos o con espacios al estándar:
+      SA / S A / S.A   → S.A.
+      SAS / S A S      → S.A.S.
+      SAC / S A C      → S.A.C.
+      SRL / S R L      → S.R.L.
+      BV  / B V        → B.V.
+      NV  / N V        → N.V.
+
+    No modifica formas ya correctas (e.g. "PIAMONTE S.A." queda igual).
+    También inserta espacio si el punto final queda pegado a un código BIC
+    (e.g. "COMODIN S.A.S.CHASUS33XXX" → "COMODIN S.A.S. CHASUS33XXX").
+
+    Uso típico:
+      - post_validacion_swift.py: normalizar Proveedor / Nombre personalizado
+        antes de escribir la plantilla Bancolombia.
+      - run_formulario.py: normalizar ambos lados del cruce de Llave
+        (Swift y origenDestino) para garantizar tokenización simétrica.
+    """
+    if not nombre:
+        return nombre  # type: ignore[return-value]
+    s = str(nombre)
+    for patron, reemplazo in _FORMAS_SOCIETARIAS_PATTERNS:
+        s = patron.sub(reemplazo, s)
+    s = _RE_FORMA_BIC_PEGADO.sub(r'\1 \2', s)
+    return re.sub(r'  +', ' ', s).strip()
+
+
+# =========================================================
 # LIMPIEZA DE MONTOS (formato EU y US)
 # =========================================================
 

@@ -2,12 +2,9 @@
 """
 config.py — Configuración centralizada del proyecto Origen_Destino_DIAN
 
-Única fuente de verdad para rutas, constantes y parámetros.
-Todos los scripts deben importar desde aquí; ninguno define rutas propias.
-
-Resolución de BASE_ROOT (en orden de prioridad):
-  1. Variable de entorno: ORIGEN_DESTINO_ROOT
-  2. Ruta relativa al propio config.py (portabilidad entre equipos)
+Soporta dos tipos de operación:
+  - "imp"  Importaciones (COMODIN/CONTROL DE PAGOS)
+  - "exp"  Exportaciones (EXPORTACIONES/SWIFT 2019-2026/COMODIN)
 """
 
 from __future__ import annotations
@@ -17,15 +14,9 @@ from datetime import date
 from pathlib import Path
 
 # =========================================================
-# BASE ROOT — raíz del proyecto
+# BASE ROOT
 # =========================================================
 def _resolve_base_root() -> Path:
-    """
-    Resuelve la raíz del proyecto de forma portable.
-    Prioridad:
-      1. Variable de entorno ORIGEN_DESTINO_ROOT (ideal para múltiples equipos)
-      2. Directorio donde vive este config.py (raíz del proyecto)
-    """
     env_root = os.environ.get("ORIGEN_DESTINO_ROOT")
     if env_root:
         p = Path(env_root)
@@ -34,7 +25,6 @@ def _resolve_base_root() -> Path:
         raise FileNotFoundError(
             f"ORIGEN_DESTINO_ROOT apunta a una ruta que no existe: {env_root}"
         )
-    # Relativo a este archivo → funciona sin importar en qué equipo/carpeta esté
     return Path(__file__).resolve().parent
 
 
@@ -49,42 +39,102 @@ DIR_LOGS:       Path = BASE_ROOT / "logs"
 DIR_PLANTILLAS: Path = BASE_ROOT / "plantillas"
 
 # =========================================================
-# FUENTE DE PDFs SWIFT (red corporativa)
-
-SWIFT_AÑO: int = 2025 #date.today().year
-
-DIR_SWIFT_RAIZ: Path = Path(r"O:\Comercio Exterior\Importaciones\CONTROL DE PAGOS") / f"CONTROL DE PAGOS {SWIFT_AÑO}" / "SWIFT" / "COMODIN"
-
-SWIFT_FECHA_DESDE: date = date(2025, 4, 1)        # 1 de abril 2025
-
-SWIFT_CORTE_V2: date = date(SWIFT_AÑO, 11, 26)   # 26 de noviembre  ← FIX
-
-# Carpetas locales opcionales: se usan si DIR_SWIFT_RAIZ no existe
-# (útil para pruebas offline o ejecución sin red).
-DIR_PDFS_V1: Path = BASE_ROOT / "pdfs V1"
-DIR_PDFS_V2: Path = BASE_ROOT / "pdfs V2"
+# AÑO Y CORTE V1/V2 (compartido IMP y EXP)
+# =========================================================
+SWIFT_AÑO:      int  = 2025
+SWIFT_CORTE_V2: date = date(SWIFT_AÑO, 11, 26)   # 26 noviembre → empieza V2
 
 # =========================================================
-# ARCHIVOS DE ENTRADA (Bases de datos)
+# IMP — Importaciones
+# =========================================================
+DIR_SWIFT_RAIZ_IMP: Path = (
+    Path(r"O:\Comercio Exterior\Importaciones\CONTROL DE PAGOS")
+    / f"CONTROL DE PAGOS {SWIFT_AÑO}"
+    / "SWIFT"
+    / "COMODIN"
+)
+SWIFT_FECHA_DESDE_IMP: date = date(2025, 4, 1)
+
+# Fallback local (sin red)
+DIR_PDFS_V1_IMP: Path = BASE_ROOT / "pdfs V1"
+DIR_PDFS_V2_IMP: Path = BASE_ROOT / "pdfs V2"
+
+# Salidas IMP
+SWIFT_COMPLETOS_IMP: Path = DIR_RESULTADOS / "Swift_completos.xlsx"
+SWIFT_MANUALES_IMP:  Path = DIR_RESULTADOS / "Swift_manuales.xlsx"
+CACHE_FILE_IMP:      Path = DIR_RESULTADOS / ".procesados_cache.json"
+
+# Plantilla Bancolombia IMP (V1 + V2 unificados)
+PLANTILLA_IMP: Path = DIR_PLANTILLAS / "Plantilla_imp.xlsx"
+
+# ── Alias legacy (compatibilidad con scripts que importan el nombre corto) ──
+DIR_SWIFT_RAIZ    = DIR_SWIFT_RAIZ_IMP
+SWIFT_FECHA_DESDE = SWIFT_FECHA_DESDE_IMP
+DIR_PDFS_V1       = DIR_PDFS_V1_IMP
+DIR_PDFS_V2       = DIR_PDFS_V2_IMP
+SWIFT_COMPLETOS   = SWIFT_COMPLETOS_IMP
+SWIFT_MANUALES    = SWIFT_MANUALES_IMP
+ACUMULADO_SWIFT   = DIR_RESULTADOS / "Acumulado_swift.xlsx"
+CACHE_FILE        = CACHE_FILE_IMP
+PLANTILLA         = PLANTILLA_IMP  # alias legacy
+
+# =========================================================
+# EXP — Exportaciones
+# =========================================================
+DIR_SWIFT_RAIZ_EXP: Path = (
+    Path(r"O:\Finanzas\Info Bancos\Pagos Internacionales\VARIOS - CUENTAS DE COMPENSACION")
+    / "EXPORTACIONES"
+    / "SWIFT 2019-2026"
+    / "COMODIN"
+    / str(SWIFT_AÑO) #cambiar por SWIFT_AÑO
+)
+SWIFT_FECHA_DESDE_EXP: date = date(2025, 4, 1)
+
+# Fallback local (sin red)
+DIR_PDFS_V1_EXP: Path = BASE_ROOT / "pdfs exp V1"
+DIR_PDFS_V2_EXP: Path = BASE_ROOT / "pdfs exp V2"
+
+# Salidas EXP
+SWIFT_COMPLETOS_EXP: Path = DIR_RESULTADOS / "Swift_completos_exp.xlsx"
+SWIFT_MANUALES_EXP:  Path = DIR_RESULTADOS / "Swift_manuales_exp.xlsx"
+ACUMULADO_SWIFT_EXP: Path = DIR_RESULTADOS / "Acumulado_swift_exp.xlsx"
+CACHE_FILE_EXP:      Path = DIR_RESULTADOS / ".procesados_cache_exp.json"
+
+# Plantilla Bancolombia EXP (V1 + V2 unificados)
+PLANTILLA_EXP: Path = DIR_PLANTILLAS / "Plantilla_exp.xlsx"
+
+# =========================================================
+# EXP — Servicios
+# =========================================================
+DIR_SWIFT_RAIZ_EXP: Path = (
+    Path(r"O:\Finanzas\Info Bancos\Pagos Internacionales\VARIOS - CUENTAS DE COMPENSACION")
+    / "EXPORTACIONES"
+    / "SWIFT 2019-2026"
+    / "COMODIN"
+    / str(SWIFT_AÑO) #cambiar por SWIFT_AÑO
+)
+SWIFT_FECHA_DESDE_GTO: date = date(2025, 4, 1)
+
+# Fallback local (sin red)
+DIR_PDFS_V1_GTO: Path = BASE_ROOT / "pdfs Gto V1"
+DIR_PDFS_V2_GTO: Path = BASE_ROOT / "pdfs Gto V2"
+
+# Salidas GTO
+SWIFT_COMPLETOS_GTO: Path = DIR_RESULTADOS / "Swift_completos_gto.xlsx"
+SWIFT_MANUALES_GTO:  Path = DIR_RESULTADOS / "Swift_manuales_gto.xlsx"
+ACUMULADO_SWIFT_GTO: Path = DIR_RESULTADOS / "Acumulado_swift_gto.xlsx"
+CACHE_FILE_GTO:      Path = DIR_RESULTADOS / ".procesados_cache_gto.json"
+
+# Plantilla Bancolombia GTO (V1 + V2 unificados)
+PLANTILLA_GTO: Path = DIR_PLANTILLAS / "Plantilla_gto.xlsx"
+
+# =========================================================
+# ARCHIVOS DE ENTRADA (Bases de datos) — compartidos
 # =========================================================
 BD_PROVEEDORES:  Path = DIR_DBS / "Bd Proveedores.xlsx"
 BD_SWIFT:        Path = DIR_DBS / "Bd Swift.xlsx"
 XLSB_CUENTA_COM: Path = DIR_DBS / "Cuenta compensacion.xlsb"
 ORIGEN_DESTINO:  Path = DIR_DBS / "origenDestino.xlsx"
-
-# =========================================================
-# ARCHIVOS DE SALIDA (resultados)
-# =========================================================
-SWIFT_COMPLETOS: Path = DIR_RESULTADOS / "Swift_completos.xlsx"
-SWIFT_MANUALES:  Path = DIR_RESULTADOS / "Swift_manuales.xlsx"
-ACUMULADO_SWIFT: Path = DIR_RESULTADOS / "Acumulado_swift.xlsx"
-CACHE_FILE:      Path = DIR_RESULTADOS / ".procesados_cache.json"
-
-# =========================================================
-# PLANTILLAS BANCOLOMBIA
-# =========================================================
-PLANTILLA_V1: Path = DIR_PLANTILLAS / "Datos_Origen_Destino_V1.xlsx"
-PLANTILLA_V2: Path = DIR_PLANTILLAS / "Datos_Origen_Destino_V2.xlsx"
 
 # =========================================================
 # NOMBRES DE HOJAS EXCEL
@@ -116,21 +166,21 @@ OD2_COL_LLAVE_OD    = "Llave Origen Destino"
 OCR_LANG   = "eng"
 OCR_CONFIG = r"--oem 3 --psm 6"
 OCR_DPI    = 300
-OCR_MIN_NATIVE_CHARS: int = 99999  # ← FIX: fuerza siempre OCR
+OCR_MIN_NATIVE_CHARS: int = 99999   # fuerza siempre OCR
 
 # =========================================================
 # PARÁMETROS DE MATCHING Y VALIDACIÓN
 # =========================================================
-FUZZY_THRESHOLD  = 85    # umbral mínimo para match fuzzy de proveedores
-TOKEN_MIN_RATIO  = 0.60  # mínimo 60% de tokens coincidentes en cruce formulario
-TOKEN_MIN_OVERLAP = 2    # mínimo 2 tokens en común
+FUZZY_THRESHOLD   = 85
+TOKEN_MIN_RATIO   = 0.60
+TOKEN_MIN_OVERLAP = 2
 
 # =========================================================
 # PARÁMETROS FINANCIEROS
 # =========================================================
 CUENTA_COMPENSACION = "2190709002"
-AMOUNT_TOL          = 0.01   # tolerancia para comparar montos numéricos
-FECHA_MIN_XLSB      = "2025-04-01"  # filtro mínimo de fecha en XLSB
+AMOUNT_TOL          = 0.01
+FECHA_MIN_XLSB      = "2025-04-01"
 
 # =========================================================
 # COLUMNAS FINALES (orden canónico de exportación)
@@ -170,4 +220,4 @@ ACUMULADO_COLS = [
 # =========================================================
 # DEBUG
 # =========================================================
-DEBUG = False  # True activa logs detallados de OCR y matching
+DEBUG = True

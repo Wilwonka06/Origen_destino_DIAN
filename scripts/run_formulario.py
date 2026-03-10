@@ -8,7 +8,7 @@ PASO 1) Lee XLSB (hoja COM)
 
 PASO 2) Filtra:
         - FECHA >= config.FECHA_MIN_XLSB
-        - INDICA == Imp
+        - INDICA == tipo  ("imp" para IMP, "exp" para EXP)
 
 PASO 3) Cruza con Swift_completos:
         - Llave 1: FECHA_COM (normalizada a YYYY-MM-DD) vs Date (Swift)
@@ -23,6 +23,9 @@ PASO 3) Cruza con Swift_completos:
 PASO 4) Cruce Llave (origenDestino.xlsx):
         - Llave: "Nombre personalizado" (origenDestino / hoja Datos Origen Destino)
                  vs "Nombre personalizado" (Swift)
+        - Formas societarias normalizadas a canónico con puntos en ambos lados
+          (SA → S.A., SAS → S.A.S., SAC → S.A.C., BV → B.V., NV → N.V.)
+          para garantizar tokenización simétrica y evitar fallos de match.
         - Trae: "Llave carga masiva" -> "Llave" (Swift)
 
 PASO 5) Cruce final (origenDestino.xlsx / hoja "Origen y destino"):
@@ -73,11 +76,63 @@ def _parse_fecha_excel_series(s: pd.Series) -> pd.Series:
     return pd.to_datetime(s2, dayfirst=True, errors="coerce")
 
 
+# ─── Formas societarias: patrones ordenados de más largo a más corto ──────────
+# Cada tupla: (patrón compilado, reemplazo canónico con puntos)
+# La normalización es simétrica: se aplica tanto al nombre Swift como al de OD,
+# garantizando que "SA", "S A", "S.A" y "S.A." tokenicen igual → "s.a."
+_FORMAS_SOCIETARIAS_PATTERNS = [
+    (re.compile(r'\bS\.A\.S\.(?!\w)',           re.IGNORECASE), 'S.A.S.'),  # ya correcto
+    (re.compile(r'\bS[\s\.]*A[\s\.]*S[\s\.]*(?!\.|[A-Z0-9])', re.IGNORECASE), 'S.A.S.'),
+    (re.compile(r'\bS\.A\.C\.(?!\w)',           re.IGNORECASE), 'S.A.C.'),
+    (re.compile(r'\bS[\s\.]*A[\s\.]*C[\s\.]*(?!\.|[A-Z0-9])', re.IGNORECASE), 'S.A.C.'),
+    (re.compile(r'\bS\.R\.L\.(?!\w)',           re.IGNORECASE), 'S.R.L.'),
+    (re.compile(r'\bS[\s\.]*R[\s\.]*L[\s\.]*(?!\.|[A-Z0-9])', re.IGNORECASE), 'S.R.L.'),
+    (re.compile(r'\bS\.A\.(?!\w)',              re.IGNORECASE), 'S.A.'),    # ya correcto
+    (re.compile(r'\bS[\s\.]*A[\s\.]*(?!\.|\w)', re.IGNORECASE), 'S.A.'),
+    (re.compile(r'\bB\.V\.(?!\w)',              re.IGNORECASE), 'B.V.'),
+    (re.compile(r'\bB[\s\.]*V[\s\.]*(?!\.|[A-Z0-9])', re.IGNORECASE), 'B.V.'),
+    (re.compile(r'\bN\.V\.(?!\w)',              re.IGNORECASE), 'N.V.'),
+    (re.compile(r'\bN[\s\.]*V[\s\.]*(?!\.|[A-Z0-9])', re.IGNORECASE), 'N.V.'),
+]
+# Inserta espacio si punto final de forma societaria queda pegado a un BIC
+_RE_FORMA_BIC_PEGADO = re.compile(r'(\.)([A-Z]{4}[A-Z0-9]{2}[A-Z0-9]{2})')
+
+
+def _corregir_forma_societaria(nombre: str) -> str:
+    """
+    Normaliza formas societarias al formato canónico con puntos.
+    Aplica a los dos lados del cruce de llave (Swift y origenDestino) para
+    garantizar tokens simétricos durante el matching.
+
+    Ejemplos:
+      "NOVOMODE SA"    → "NOVOMODE S.A."
+      "COMODIN S A S"  → "COMODIN S.A.S."
+      "KROKOM SAC"     → "KROKOM S.A.C."
+      "BALNOR BV"      → "BALNOR B.V."
+      "NOVOMODE S A CITIUS33XXX" → "NOVOMODE S.A. CITIUS33XXX"
+    No modifica formas ya correctas (e.g., "PIAMONTE S.A.").
+    """
+    if not nombre:
+        return nombre
+    resultado = nombre
+    for patron, reemplazo in _FORMAS_SOCIETARIAS_PATTERNS:
+        resultado = patron.sub(reemplazo, resultado)
+    resultado = _RE_FORMA_BIC_PEGADO.sub(r'\1 \2', resultado)
+    return re.sub(r'  +', ' ', resultado).strip()
+
+
 def _normalize_text_key(x) -> str:
-    """Normaliza texto: lowercase, sin espacios extra, sin nbsp."""
+    """
+    Normaliza texto para comparaciones de llave:
+      1. Elimina espacios no separables y blancos extremos
+      2. Normaliza formas societarias al formato canónico con puntos
+         (e.g., SA → S.A., S A S → S.A.S.) para tokenización simétrica
+      3. Colapsa espacios múltiples y aplica casefold
+    """
     if x is None:
         return ""
     s = str(x).replace("\u00A0", " ").strip()
+    s = _corregir_forma_societaria(s)
     s = re.sub(r"\s+", " ", s)
     return s.casefold()
 
@@ -200,7 +255,12 @@ def read_com_sheet(xlsb_path: Path, sheet_name: str = config.SHEET_COM) -> pd.Da
 # =========================================================
 # PASO 2) FILTROS FECHA + INDICA=Imp
 # =========================================================
-def filter_com_df(df: pd.DataFrame) -> pd.DataFrame:
+def filter_com_df(df: pd.DataFrame, tipo: str = "imp") -> pd.DataFrame:
+    """
+    Filtra el COM por fecha y por INDICA según tipo:
+      - tipo="imp" → INDICA == "imp"
+      - tipo="exp" → INDICA == "exp"
+    """
     if df.empty:
         LOGGER.warning("COM viene vacío antes de filtrar.")
         return df
@@ -211,6 +271,8 @@ def filter_com_df(df: pd.DataFrame) -> pd.DataFrame:
         raise KeyError(f"No encuentro columna FECHA. Columnas: {list(df.columns)}")
     if "INDICA" not in cols_map:
         raise KeyError(f"No encuentro columna INDICA. Columnas: {list(df.columns)}")
+
+    indica_valor = tipo.lower().strip()  # "imp" o "exp"
 
     out = df.copy()
     out["_FECHA_DT"] = _parse_fecha_excel_series(out[cols_map["FECHA"]])
@@ -225,12 +287,12 @@ def filter_com_df(df: pd.DataFrame) -> pd.DataFrame:
     before = len(out)
     out = out.loc[out["_FECHA_DT"].notna()].copy()
     out = out.loc[out["_FECHA_DT"] >= FECHA_MIN].copy()
-    out = out.loc[out["_INDICA_NORM"] == "imp"].copy()
+    out = out.loc[out["_INDICA_NORM"] == indica_valor].copy()
     out = out.drop(columns=["_FECHA_DT", "_INDICA_NORM"], errors="ignore").reset_index(drop=True)
 
     LOGGER.info(
         f"Filtro COM: inicio={before} → resultado={len(out)} "
-        f"(FECHA>={FECHA_MIN.date()}, INDICA=Imp)"
+        f"(FECHA>={FECHA_MIN.date()}, INDICA={tipo.upper()})"
     )
     return out
 
@@ -704,36 +766,46 @@ def _update_od_llave(path: Path, df_swift_all: pd.DataFrame) -> None:
 # =========================================================
 # FUNCIÓN PRINCIPAL — llamada desde main.py
 # =========================================================
-def run_cruce_completo() -> Dict:
+def run_cruce_completo(tipo: str = "imp") -> Dict:
     """
-    Ejecuta los 5 pasos del cruce.
+    Ejecuta los 5 pasos del cruce para IMP o EXP.
+    Parámetros:
+        tipo: "imp" | "exp"
     Retorna dict con estadísticas: formularios, llaves.
     """
-    LOGGER.info("=== INICIO CRUCE FORMULARIOS + LLAVE ===")
+    tipo = tipo.lower().strip()
+    tipo_label = tipo.upper()
+    LOGGER.info(f"=== INICIO CRUCE FORMULARIOS + LLAVE [{tipo_label}] ===")
+
+    # Seleccionar Swift_completos según tipo
+    swift_completos = (
+        config.SWIFT_COMPLETOS_IMP if tipo == "imp"
+        else config.SWIFT_COMPLETOS_EXP
+    )
 
     validate_input_files(
         config.XLSB_CUENTA_COM,
-        config.SWIFT_COMPLETOS,
+        swift_completos,
         config.ORIGEN_DESTINO,
-        context="run_formulario",
+        context=f"run_formulario_{tipo}",
     )
 
     stats = {"formularios": 0, "llaves": 0}
 
-    # Paso 1 + 2: Leer y filtrar COM
-    df_com           = read_com_sheet(config.XLSB_CUENTA_COM, config.SHEET_COM)
-    df_com_filtrado  = filter_com_df(df_com)
+    # Paso 1 + 2: Leer y filtrar COM por tipo (INDICA=Imp o Exp)
+    df_com          = read_com_sheet(config.XLSB_CUENTA_COM, config.SHEET_COM)
+    df_com_filtrado = filter_com_df(df_com, tipo=tipo)
 
     if df_com_filtrado.empty:
-        LOGGER.warning("COM filtrada vacía. No se puede ejecutar cruce.")
+        LOGGER.warning(f"COM filtrada vacía para {tipo_label}. No se puede ejecutar cruce.")
         return stats
 
     # Preparar COM keys una sola vez
     com_keys = _build_com_keys(df_com_filtrado)
 
     # Leer Swift_completos
-    df_v1 = read_sheet_safe(config.SWIFT_COMPLETOS, config.SHEET_V1, context="cruces")
-    df_v2 = read_sheet_safe(config.SWIFT_COMPLETOS, config.SHEET_V2, context="cruces")
+    df_v1 = read_sheet_safe(swift_completos, config.SHEET_V1, context=f"cruces_{tipo}")
+    df_v2 = read_sheet_safe(swift_completos, config.SHEET_V2, context=f"cruces_{tipo}")
 
     # Forzar dtype object para columnas que recibirán strings
     for df in (df_v1, df_v2):
@@ -742,7 +814,7 @@ def run_cruce_completo() -> Dict:
                 df[col] = df[col].astype(object)
 
     # Paso 3: Formulario
-    LOGGER.info("Paso 3: Cruce Formulario (COM → Swift por Nombre archivo + fecha)...")
+    LOGGER.info(f"Paso 3: Cruce Formulario (COM → Swift) [{tipo_label}]...")
     df_v1 = _update_formulario_for_sheet(df_v1, com_keys)
     df_v2 = _update_formulario_for_sheet(df_v2, com_keys)
 
@@ -752,7 +824,7 @@ def run_cruce_completo() -> Dict:
     )
 
     # Paso 4: Llave
-    LOGGER.info("Paso 4: Cruce Llave (origenDestino → Swift)...")
+    LOGGER.info(f"Paso 4: Cruce Llave (origenDestino → Swift) [{tipo_label}]...")
     od_map = _read_od_mapping(config.ORIGEN_DESTINO)
     df_v1  = _apply_llave_to_sheet(df_v1, od_map)
     df_v2  = _apply_llave_to_sheet(df_v2, od_map)
@@ -762,20 +834,20 @@ def run_cruce_completo() -> Dict:
         + df_v2["Llave"].replace("", pd.NA).notna().sum()
     )
 
-    # Guardar Swift_completos
+    # Guardar Swift_completos actualizado
     write_sheets(
-        config.SWIFT_COMPLETOS,
+        swift_completos,
         {config.SHEET_V1: df_v1, config.SHEET_V2: df_v2},
-        context="run_formulario",
+        context=f"run_formulario_{tipo}",
     )
 
     # Paso 5: Llave Origen Destino
-    LOGGER.info("Paso 5: Actualizando Llave Origen Destino en origenDestino.xlsx...")
+    LOGGER.info(f"Paso 5: Actualizando Llave Origen Destino en origenDestino.xlsx [{tipo_label}]...")
     df_swift_all = pd.concat([df_v1, df_v2], ignore_index=True)
     _update_od_llave(config.ORIGEN_DESTINO, df_swift_all)
 
     LOGGER.info(
-        f"=== FIN CRUCE ===  "
+        f"=== FIN CRUCE [{tipo_label}] ===  "
         f"Formularios={stats['formularios']} | Llaves={stats['llaves']}"
     )
     return stats

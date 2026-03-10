@@ -2,23 +2,24 @@
 """
 main.py — Orquestador del pipeline Origen_Destino_DIAN
 
-Punto de entrada único para ejecutar cualquier parte del flujo.
-
 MODOS DE EJECUCIÓN:
-  1. python main.py                    → pipeline completo
-  2. python main.py --modo ocr         → solo extracción OCR de PDFs
-  3. python main.py --modo post        → mover manuales corregidos a completos
-  4. python main.py --modo post_auto   → igual que post pero sin pedir confirmación
-  5. python main.py --modo cruces      → solo cruce formulario + llave
-  6. python main.py --forzar           → ignora caché, reprocesa todos los PDFs
+  Todos los modos aceptan --tipo imp (default) o --tipo exp.
+  La lógica es idéntica — solo cambian los archivos que se procesan.
 
-DISEÑADO PARA GUI:
-  Cada modo retorna un PipelineResult con toda la información
-  necesaria para que una interfaz muestre el resumen al usuario.
-  
-  from main import run_pipeline
-  result = run_pipeline(modo="completo")
-  print(result.resumen())
+  python main.py                        → proceso completo IMP
+  python main.py --tipo exp             → proceso completo EXP
+  python main.py --modo ocr             → solo extracción OCR
+  python main.py --modo post_auto       → pasar manuales a completos
+  python main.py --modo plantilla       → generar plantilla Bancolombia
+  python main.py --modo cruces          → solo cruces
+  python main.py --forzar               → ignora caché (aplica al modo ocr)
+  python gui_launcher.py                → interfaz gráfica
+
+FLUJO COMPLETO (igual para IMP y EXP, cambia solo --tipo):
+  1. ocr       → extrae PDFs → Swift_completos_{tipo}
+  2. post_auto → manuales → completos + acumulado
+  3. plantilla → genera Datos_Origen_Destino_V1/V2_{tipo}  ← subir a Bancolombia
+  4. cruces    → Formulario + Llave + Llave OD  ← requiere origenDestino descargado
 """
 
 from __future__ import annotations
@@ -31,9 +32,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-# =========================================================
-# INICIALIZACIÓN TEMPRANA DE LOGGING Y CONFIG
-# =========================================================
 import config
 from core.logger import init_logging, get_logger
 from core.validators import validate_input_files, validate_output_dirs
@@ -44,37 +42,31 @@ LOGGER = get_logger("main")
 
 
 # =========================================================
-# DATACLASS DE RESULTADO (para GUI futura)
+# DATACLASS DE RESULTADO
 # =========================================================
 @dataclass
 class PipelineResult:
-    """
-    Resultado de una ejecución del pipeline.
-    Diseñado para ser consumido por una GUI.
-    """
-    modo:               str
-    inicio:             datetime     = field(default_factory=datetime.now)
-    fin:                Optional[datetime] = None
+    modo:                str
+    tipo:                str = "imp"
+    inicio:              datetime = field(default_factory=datetime.now)
+    fin:                 Optional[datetime] = None
 
-    # OCR
-    pdfs_nuevos_v1:     int = 0
-    pdfs_nuevos_v2:     int = 0
-    pdfs_completos:     int = 0
-    pdfs_incompletos:   int = 0
-    pdfs_error:         int = 0
+    pdfs_nuevos_v1:      int = 0
+    pdfs_nuevos_v2:      int = 0
+    pdfs_completos:      int = 0
+    pdfs_incompletos:    int = 0
+    pdfs_error:          int = 0
 
-    # Post validación
-    manuales_movidos:   int = 0
+    manuales_movidos:    int = 0
     manuales_pendientes: int = 0
 
-    # Cruces
+    plantilla_registros:  int = 0
     formularios_cruzados: int = 0
     llaves_cruzadas:      int = 0
 
-    # General
-    errores:            list[str] = field(default_factory=list)
-    advertencias:       list[str] = field(default_factory=list)
-    exitoso:            bool = True
+    errores:             list[str] = field(default_factory=list)
+    advertencias:        list[str] = field(default_factory=list)
+    exitoso:             bool = True
 
     @property
     def duracion_segundos(self) -> float:
@@ -83,14 +75,13 @@ class PipelineResult:
         return 0.0
 
     def resumen(self) -> str:
-        """Texto de resumen para mostrar en consola o GUI."""
+        tipo_label = "IMPORTACIONES" if self.tipo == "imp" else "EXPORTACIONES"
         lines = [
             "=" * 60,
-            f"  RESUMEN PIPELINE — modo: {self.modo.upper()}",
+            f"  RESUMEN — modo: {self.modo.upper()}  |  {tipo_label}",
             f"  Duración: {self.duracion_segundos:.1f}s",
             "=" * 60,
         ]
-
         if self.pdfs_nuevos_v1 + self.pdfs_nuevos_v2 > 0:
             lines += [
                 f"  PDFs procesados V1:  {self.pdfs_nuevos_v1}",
@@ -100,63 +91,52 @@ class PipelineResult:
             ]
             if self.pdfs_error:
                 lines.append(f"  ⚠ Con error:         {self.pdfs_error}")
-
         if self.manuales_movidos + self.manuales_pendientes > 0:
             lines += [
-                f"  Manuales movidos a completos: {self.manuales_movidos}",
-                f"  Manuales aún incompletos:     {self.manuales_pendientes}",
+                f"  Manuales movidos:     {self.manuales_movidos}",
+                f"  Manuales pendientes:  {self.manuales_pendientes}",
             ]
-
+        if self.plantilla_registros:
+            lines.append(f"  Plantilla generada:   {self.plantilla_registros} registros")
         if self.formularios_cruzados:
             lines.append(f"  Formularios cruzados: {self.formularios_cruzados}")
         if self.llaves_cruzadas:
             lines.append(f"  Llaves asignadas:     {self.llaves_cruzadas}")
-
         if self.advertencias:
             lines.append("  ADVERTENCIAS:")
             for w in self.advertencias:
                 lines.append(f"    ⚠ {w}")
-
         if self.errores:
             lines.append("  ERRORES:")
             for e in self.errores:
                 lines.append(f"    ✗ {e}")
-
         estado = "✔ EXITOSO" if self.exitoso else "✗ FALLÓ"
-        lines.append(f"  Estado: {estado}")
-        lines.append("=" * 60)
+        lines += [f"  Estado: {estado}", "=" * 60]
         return "\n".join(lines)
 
 
 # =========================================================
 # PASO 1 — EXTRACCIÓN OCR
 # =========================================================
-def _run_ocr(result: PipelineResult, forzar: bool = False) -> None:
-    """Ejecuta la extracción OCR de PDFs V1 y V2."""
-    LOGGER.info("── PASO 1: Extracción OCR ──")
+def _run_ocr(result: PipelineResult, forzar: bool = False, tipo: str = "imp") -> None:
+    LOGGER.info(f"── PASO 1: Extracción OCR [{tipo.upper()}] ──")
 
     try:
-        validate_input_files(
-            config.DIR_SWIFT_RAIZ,
-            config.DIR_SWIFT_RAIZ,
-            config.BD_PROVEEDORES,
-            config.BD_SWIFT,
-            context="OCR"
-        )
         validate_output_dirs(config.DIR_RESULTADOS)
     except FileNotFoundError as e:
         result.errores.append(str(e))
         result.exitoso = False
         return
 
-    cache = PdfCache(config.CACHE_FILE)
+    cache_file = config.CACHE_FILE_IMP if tipo == "imp" else config.CACHE_FILE_EXP
+    cache = PdfCache(cache_file)
     if forzar:
         LOGGER.info("Modo --forzar activo: vaciando caché")
         cache.clear()
 
     try:
         from scripts.run_pipeline import run_pipeline_completo
-        stats = run_pipeline_completo(cache=cache, debug=config.DEBUG)
+        stats = run_pipeline_completo(cache=cache, debug=config.DEBUG, tipo=tipo)
 
         result.pdfs_nuevos_v1   = stats.get("nuevos_v1", 0)
         result.pdfs_nuevos_v2   = stats.get("nuevos_v2", 0)
@@ -165,7 +145,7 @@ def _run_ocr(result: PipelineResult, forzar: bool = False) -> None:
         result.pdfs_error       = stats.get("errores", 0)
 
         cache.save()
-        LOGGER.info("── PASO 1 completado ──")
+        LOGGER.info(f"── PASO 1 completado [{tipo.upper()}] ──")
 
     except Exception as e:
         LOGGER.error(f"Error en extracción OCR: {e}", exc_info=True)
@@ -174,18 +154,23 @@ def _run_ocr(result: PipelineResult, forzar: bool = False) -> None:
 
 
 # =========================================================
-# PASO 2 — MOVER MANUALES CORREGIDOS A COMPLETOS
+# PASO 2 — MOVER MANUALES
 # =========================================================
-def _run_post_manual(result: PipelineResult, confirmar: bool = True) -> None:
-    """
-    Mueve los registros de Swift_manuales que ya están completos a Swift_completos.
-    Si confirmar=True, muestra un resumen y pide confirmación antes de proceder.
-    """
-    LOGGER.info("── PASO 2: Post validación (manuales → completos) ──")
+def _run_post_manual(
+    result: PipelineResult,
+    confirmar: bool = True,
+    tipo: str = "imp",
+) -> None:
+    LOGGER.info(f"── PASO 2: Post validación [{tipo.upper()}] ──")
 
-    if not config.SWIFT_MANUALES.exists():
-        result.advertencias.append("Swift_manuales.xlsx no existe aún. Post validación omitida.")
-        LOGGER.warning("Swift_manuales.xlsx no existe.")
+    # Seleccionar archivos según tipo
+    swift_manuales = config.SWIFT_MANUALES_IMP if tipo == "imp" else config.SWIFT_MANUALES_EXP
+
+    if not swift_manuales.exists():
+        result.advertencias.append(
+            f"Swift_manuales_{tipo}.xlsx no existe aún. Post validación omitida."
+        )
+        LOGGER.warning(f"Swift_manuales_{tipo}.xlsx no existe.")
         return
 
     try:
@@ -194,12 +179,12 @@ def _run_post_manual(result: PipelineResult, confirmar: bool = True) -> None:
             ejecutar_mover_manuales,
         )
 
-        listos, pendientes = contar_listos_en_manuales()
+        listos, pendientes = contar_listos_en_manuales(tipo=tipo)
 
         print("\n" + "─" * 50)
-        print(f"  Registros en Swift_manuales:      {listos + pendientes}")
-        print(f"  ✔ Listos para mover (completos):  {listos}")
-        print(f"  ✗ Aún incompletos (se quedan):    {pendientes}")
+        print(f"  [{tipo.upper()}] Registros en Swift_manuales:  {listos + pendientes}")
+        print(f"  ✔ Listos para mover:              {listos}")
+        print(f"  ✗ Aún incompletos:                {pendientes}")
         print("─" * 50)
 
         if listos == 0:
@@ -210,13 +195,13 @@ def _run_post_manual(result: PipelineResult, confirmar: bool = True) -> None:
         if confirmar:
             respuesta = input("  ¿Confirmar movimiento? (s/n): ").strip().lower()
             if respuesta not in ("s", "si", "sí", "y", "yes"):
-                print("  → Operación cancelada por el usuario.\n")
+                print("  → Cancelado.\n")
                 return
 
-        movidos = ejecutar_mover_manuales()
+        movidos = ejecutar_mover_manuales(tipo=tipo)
         result.manuales_movidos    = movidos
         result.manuales_pendientes = pendientes
-        LOGGER.info(f"── PASO 2 completado: {movidos} registros movidos ──")
+        LOGGER.info(f"── PASO 2 completado: {movidos} movidos [{tipo.upper()}] ──")
 
     except Exception as e:
         LOGGER.error(f"Error en post validación: {e}", exc_info=True)
@@ -225,18 +210,54 @@ def _run_post_manual(result: PipelineResult, confirmar: bool = True) -> None:
 
 
 # =========================================================
-# PASO 3 — CRUCES (FORMULARIO + LLAVE)
+# PASO 3 — GENERAR PLANTILLA BANCOLOMBIA
 # =========================================================
-def _run_cruces(result: PipelineResult) -> None:
-    """Ejecuta el cruce de formularios y llaves contra Swift_completos."""
-    LOGGER.info("── PASO 3: Cruces (formulario + llave) ──")
+def _run_plantilla(result: PipelineResult, tipo: str = "imp") -> None:
+    LOGGER.info(f"── PASO 3: Generar Plantilla Bancolombia [{tipo.upper()}] ──")
+
+    swift_completos = (
+        config.SWIFT_COMPLETOS_IMP if tipo == "imp"
+        else config.SWIFT_COMPLETOS_EXP
+    )
+
+    if not swift_completos.exists():
+        result.advertencias.append(
+            f"Swift_completos no existe. Ejecuta primero la extracción OCR."
+        )
+        return
+
+    try:
+        from scripts.post_validacion_swift import run_generar_plantilla
+        stats = run_generar_plantilla(tipo=tipo)
+        result.plantilla_registros = stats.get("registros", 0)
+        LOGGER.info(
+            f"── PASO 3 completado: {result.plantilla_registros} registros "
+            f"en plantilla [{tipo.upper()}] ──"
+        )
+
+    except Exception as e:
+        LOGGER.error(f"Error generando plantilla: {e}", exc_info=True)
+        result.errores.append(f"Generar plantilla: {e}")
+        result.exitoso = False
+
+
+# =========================================================
+# PASO 4 — CRUCES (IMP y EXP)
+# =========================================================
+def _run_cruces(result: PipelineResult, tipo: str = "imp") -> None:
+    LOGGER.info(f"── PASO 4: Cruces [{tipo.upper()}] ──")
+
+    swift_completos = (
+        config.SWIFT_COMPLETOS_IMP if tipo == "imp"
+        else config.SWIFT_COMPLETOS_EXP
+    )
 
     try:
         validate_input_files(
-            config.SWIFT_COMPLETOS,
+            swift_completos,
             config.XLSB_CUENTA_COM,
             config.ORIGEN_DESTINO,
-            context="cruces",
+            context=f"cruces_{tipo}",
         )
     except FileNotFoundError as e:
         result.errores.append(str(e))
@@ -245,11 +266,10 @@ def _run_cruces(result: PipelineResult) -> None:
 
     try:
         from scripts.run_formulario import run_cruce_completo
-        stats = run_cruce_completo()
-
+        stats = run_cruce_completo(tipo=tipo)
         result.formularios_cruzados = stats.get("formularios", 0)
         result.llaves_cruzadas      = stats.get("llaves", 0)
-        LOGGER.info("── PASO 3 completado ──")
+        LOGGER.info(f"── PASO 4 completado [{tipo.upper()}] ──")
 
     except Exception as e:
         LOGGER.error(f"Error en cruces: {e}", exc_info=True)
@@ -258,52 +278,63 @@ def _run_cruces(result: PipelineResult) -> None:
 
 
 # =========================================================
-# FUNCIÓN PRINCIPAL — run_pipeline (llamable desde GUI)
+# FUNCIÓN PRINCIPAL
 # =========================================================
 def run_pipeline(
     modo:      str  = "completo",
     forzar:    bool = False,
     confirmar: bool = True,
+    tipo:      str  = "imp",
 ) -> PipelineResult:
     """
-    Ejecuta el pipeline en el modo indicado.
+    Ejecuta el pipeline.
 
     Parámetros:
-        modo:      "completo" | "ocr" | "post" | "post_auto" | "cruces"
-        forzar:    True para ignorar caché y reprocesar todos los PDFs
-        confirmar: True para pedir confirmación antes de mover manuales
-
-    Retorna:
-        PipelineResult con estadísticas completas de la ejecución.
-        Diseñado para ser consumido por una GUI.
+        modo      : "completo" | "ocr" | "post" | "post_auto" | "plantilla" | "cruces"
+        forzar    : ignorar caché
+        confirmar : pedir confirmación antes de mover manuales
+        tipo      : "imp" | "exp"
     """
-    result = PipelineResult(modo=modo)
+    tipo = tipo.lower().strip()
+    result = PipelineResult(modo=modo, tipo=tipo)
+
+    tipo_label = "IMPORTACIONES" if tipo == "imp" else "EXPORTACIONES"
     LOGGER.info(f"╔══════════════════════════════════════════╗")
-    LOGGER.info(f"  INICIO PIPELINE — modo: {modo.upper()}")
+    LOGGER.info(f"  INICIO PIPELINE — modo: {modo.upper()} | {tipo_label}")
     LOGGER.info(f"  Base: {config.BASE_ROOT}")
     LOGGER.info(f"╚══════════════════════════════════════════╝")
 
     try:
+        # Paso 1: Extracción OCR
         if modo in ("completo", "ocr"):
-            _run_ocr(result, forzar=forzar)
+            _run_ocr(result, forzar=forzar, tipo=tipo)
 
+        # Paso 2: Pasar manuales a completos + acumulado
         if modo in ("completo", "post"):
-            _run_post_manual(result, confirmar=confirmar)
+            _run_post_manual(result, confirmar=confirmar, tipo=tipo)
 
         if modo == "post_auto":
-            _run_post_manual(result, confirmar=False)
+            _run_post_manual(result, confirmar=False, tipo=tipo)
 
+        # Paso 3: Generar plantilla Bancolombia
+        if modo in ("completo", "plantilla"):
+            _run_plantilla(result, tipo=tipo)
+
+        # Paso 4: Cruces (Formulario + Llave + Llave OD)
         if modo in ("completo", "cruces"):
-            # Solo ejecutar cruces si Swift_completos existe y tiene datos
-            if config.SWIFT_COMPLETOS.exists():
-                _run_cruces(result)
+            swift_completos = (
+                config.SWIFT_COMPLETOS_IMP if tipo == "imp"
+                else config.SWIFT_COMPLETOS_EXP
+            )
+            if swift_completos.exists():
+                _run_cruces(result, tipo=tipo)
             else:
                 result.advertencias.append(
-                    "Swift_completos.xlsx no existe aún. Cruces omitidos."
+                    f"Swift_completos no existe. Cruces omitidos."
                 )
 
     except Exception as e:
-        LOGGER.error(f"Error inesperado en pipeline: {e}", exc_info=True)
+        LOGGER.error(f"Error inesperado: {e}", exc_info=True)
         result.errores.append(f"Error inesperado: {e}")
         result.exitoso = False
     finally:
@@ -314,7 +345,7 @@ def run_pipeline(
 
 
 # =========================================================
-# ENTRADA POR LÍNEA DE COMANDOS
+# CLI
 # =========================================================
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -323,21 +354,20 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--modo",
-        choices=["completo", "ocr", "post", "post_auto", "cruces"],
+        choices=["completo", "ocr", "post", "post_auto", "plantilla", "cruces"],
         default="completo",
-        help=(
-            "Modo de ejecución:\n"
-            "  completo  → pipeline completo (default)\n"
-            "  ocr       → solo extracción de PDFs\n"
-            "  post      → mover manuales corregidos a completos (con confirmación)\n"
-            "  post_auto → igual que post, sin confirmación\n"
-            "  cruces    → solo cruce formulario + llave"
-        ),
+        help="Modo de ejecución (default: completo)",
+    )
+    parser.add_argument(
+        "--tipo",
+        choices=["imp", "exp"],
+        default="imp",
+        help="Tipo: imp=Importaciones | exp=Exportaciones (default: imp)",
     )
     parser.add_argument(
         "--forzar",
         action="store_true",
-        help="Ignora el caché y reprocesa todos los PDFs desde cero",
+        help="Ignora caché y reprocesa todos los PDFs",
     )
     return parser.parse_args()
 
@@ -347,6 +377,7 @@ if __name__ == "__main__":
     resultado = run_pipeline(
         modo=args.modo,
         forzar=args.forzar,
-        confirmar=(args.modo == "post"),   # solo pide confirmación en modo "post"
+        confirmar=(args.modo == "post"),
+        tipo=args.tipo,
     )
     sys.exit(0 if resultado.exitoso else 1)

@@ -1,809 +1,713 @@
 # -*- coding: utf-8 -*-
 """
-run_formulario.py — Cruces de Formulario, Llave y Llave OD
+run_pipeline.py — Pipeline principal de extracción y enriquecimiento
 
-PASO 1) Lee XLSB (hoja COM)
-        - Encabezados desde fila 4
-        - Toma A..F (hasta DEBITO)
+Flujo completo:
+  1) Extracción OCR → reader_pdf_V1 + reader_pdf_V2  (con soporte de caché)
+  2) Enriquecimiento Proveedor → fuzzy match contra Bd Proveedores
+  3) Enriquecimiento Pais/Ciudad → cruce Receiver vs Bd Swift
+  4) Nombre personalizado, mayúsculas, limpieza Amount
+  5) Recálculo de Estado (Completo / Incompleto)
+  6) ID determinístico por registro (uuid5)
+  7) Separación → Swift_completos.xlsx  (solo completos)
+                → Swift_manuales.xlsx   (solo incompletos)
 
-PASO 2) Filtra:
-        - FECHA >= config.FECHA_MIN_XLSB
-        - INDICA == Imp
-
-PASO 3) Cruza con Swift_completos:
-        - Llave 1: FECHA_COM (normalizada a YYYY-MM-DD) vs Date (Swift)
-        - Llave 2: DETALLE_COM (limpia desde #) vs Nombre archivo (Swift)
-                 (Nombre archivo: elimina códigos iniciales + elimina .pdf)
-                 Matching robusto por tokens:
-                   * exige coincidencia de primeras 2 palabras (si existen)
-                   * exige ratio de coincidencia >= TOKEN_MIN_RATIO
-        - Trae FORMULARIO -> Formulario (Swift)
-        - Si varios matches, suma DEBITO y si coincide con Amount, concatena formularios con "-"
-
-PASO 4) Cruce Llave (origenDestino.xlsx):
-        - Llave: "Nombre personalizado" (origenDestino / hoja Datos Origen Destino)
-                 vs "Nombre personalizado" (Swift)
-        - Trae: "Llave carga masiva" -> "Llave" (Swift)
-
-PASO 5) Cruce final (origenDestino.xlsx / hoja "Origen y destino"):
-        - Desde Swift: columna "Formulario" (ej: "12030-None-12028")
-          * extrae consecutivos numéricos
-        - Relaciona con origenDestino: columna "Consecutivo"
-        - Escribe Swift["Llave"] en origenDestino["Llave Origen Destino"]
-        - Guarda ambos archivos
+Escritura Excel:
+  - Todas las lecturas usan engine="openpyxl" (o pyxlsb para .xlsb)
+  - Todas las escrituras usan write_sheets() de excel_utils
+    que internamente usa pd.ExcelWriter(engine="openpyxl")
 """
 
 from __future__ import annotations
 
 import re
+import unicodedata
+import uuid
+from datetime import date
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional, Tuple, Union
 
 import pandas as pd
-from pyxlsb import open_workbook
 
 import config
 from core.logger import get_logger
-from core.validators import validate_input_files
-from core.excel_utils import write_sheets, read_sheet_safe
+from core.text_utils import (
+    clean_amount_value,
+    normalize_swift_11,
+    build_nombre_personalizado,
+)
+from core.excel_utils import write_sheets, reorder_columns
+from core.validators import validate_input_files, validate_output_dirs
+
+from scripts.reader_pdf_V1 import process_folder as process_folder_v1
+from scripts.reader_pdf_V2 import process_folder_v2
+from scripts.reader_pdf_V1_exp import process_folder_v1_exp
+from scripts.reader_pdf_V2_exp import process_folder_v2_exp
 
 LOGGER = get_logger(__name__)
 
-# ─── constantes ────────────────────────────────────────────
-FECHA_MIN         = pd.Timestamp(config.FECHA_MIN_XLSB)
-AMOUNT_TOL        = config.AMOUNT_TOL
-TOKEN_MIN_RATIO   = config.TOKEN_MIN_RATIO
-TOKEN_MIN_OVERLAP = config.TOKEN_MIN_OVERLAP
-HEADER_ROW_1BASED = 4
-MAX_COLS          = 6
-
 
 # =========================================================
-# UTILIDADES NORMALIZACIÓN
+# DESCUBRIMIENTO DE PDFs POR VERSIÓN (fuente de red)
 # =========================================================
-def _parse_fecha_excel_series(s: pd.Series) -> pd.Series:
-    if s is None:
-        return pd.to_datetime(pd.Series([], dtype="datetime64[ns]"))
-    if pd.api.types.is_datetime64_any_dtype(s):
-        return pd.to_datetime(s, errors="coerce")
-    if pd.api.types.is_numeric_dtype(s):
-        return pd.to_datetime(s, unit="D", origin="1899-12-30", errors="coerce")
-    s2 = s.astype(str).str.strip()
-    s2 = s2.replace({"": pd.NA, "nan": pd.NA, "NaT": pd.NA})
-    return pd.to_datetime(s2, dayfirst=True, errors="coerce")
+_MESES_ES: Dict[str, int] = {
+    "ENERO": 1, "FEBRERO": 2, "MARZO": 3, "ABRIL": 4,
+    "MAYO": 5, "JUNIO": 6, "JULIO": 7, "AGOSTO": 8,
+    "SEPTIEMBRE": 9, "SETIEMBRE": 9, "OCTUBRE": 10,
+    "NOVIEMBRE": 11, "DICIEMBRE": 12,
+}
 
 
-def _normalize_text_key(x) -> str:
-    """Normaliza texto: lowercase, sin espacios extra, sin nbsp."""
-    if x is None:
-        return ""
-    s = str(x).replace("\u00A0", " ").strip()
-    s = re.sub(r"\s+", " ", s)
-    return s.casefold()
+def _parse_mes_carpeta(nombre: str) -> Optional[int]:
+    nombre = nombre.strip().upper()
+    for mes_nombre, mes_num in _MESES_ES.items():
+        if mes_nombre in nombre:
+            return mes_num
+    return None
 
 
-def _tokenize(s: str) -> List[str]:
-    if not s:
-        return []
-    return re.findall(r"[a-z0-9]+", _normalize_text_key(s))
-
-
-def _clean_detalle(detalle) -> str:
-    """Extrae el texto ANTES del '#' en DETALLE de COM y normaliza."""
-    if detalle is None:
-        return ""
-    s = str(detalle).replace("\u00A0", " ")
-    s = re.split(r"#", s, maxsplit=1)[0].strip()
-    return _normalize_text_key(s)
-
-
-def _clean_nombre_archivo(nombre) -> str:
-    """
-    Limpia el campo 'Nombre archivo' de Swift:
-      - Quita extensión .pdf
-      - Quita prefijos numéricos iniciales (ej: '11487 11453 ')
-      - Normaliza espacios y lowercase
-    """
-    if nombre is None:
-        return ""
-    s = str(nombre).replace("\u00A0", " ").strip()
-    s = re.sub(r"\.pdf\s*$", "", s, flags=re.IGNORECASE).strip()
-    s = re.sub(r"^(?:\d+\s+)+", "", s).strip()
-    s = re.sub(r"\s+", " ", s).strip()
-    return _normalize_text_key(s)
-
-
-def _parse_money_to_float(v) -> float:
-    if v is None or (isinstance(v, float) and pd.isna(v)):
-        return float("nan")
-    if isinstance(v, (int, float)) and not isinstance(v, bool):
-        return float(v)
-    s = str(v).replace("\u00A0", " ").strip()
-    s = re.sub(r"\s+", "", s)
-    s = re.sub(r"[^0-9\.,\-]", "", s)
-    if s in ("", "-", ".", ","):
-        return float("nan")
-    if "," in s and "." in s:
-        s = s.replace(".", "").replace(",", ".")
-    elif "," in s and "." not in s:
-        s = s.replace(",", ".")
-    if re.search(r"\.$", s):
-        s += "0"
+def _parse_fecha_carpeta_dia(nombre: str, anio: int) -> Optional[date]:
+    import re as _re
+    nombre = nombre.strip().upper()
+    m = _re.match(r"^(\d{1,2})\s+([A-ZÁÉÍÓÚÑ]+)$", nombre)
+    if not m:
+        return None
+    dia_str, mes_str = m.group(1), m.group(2)
+    mes_num = _MESES_ES.get(mes_str)
+    if not mes_num:
+        return None
     try:
-        return float(s)
-    except Exception:
-        return float("nan")
+        return date(anio, mes_num, int(dia_str))
+    except ValueError:
+        return None
+
+
+def _descubrir_pdfs_por_version(
+    raiz: Path,
+    corte_v2: date,
+    anio: int,
+    fecha_desde: Optional[date] = None,
+) -> tuple:
+    if not raiz.exists():
+        LOGGER.warning(
+            f"DIR_SWIFT_RAIZ no existe o no es accesible: {raiz}\n"
+            "Se usarán las carpetas locales DIR_PDFS_V1 / DIR_PDFS_V2 como fallback."
+        )
+        return [], []
+
+    pdfs_v1: List[tuple] = []
+    pdfs_v2: List[tuple] = []
+    sin_fecha: List[Path] = []
+    carpetas_dia_totales = 0
+
+    for carpeta_mes in sorted(raiz.iterdir()):
+        if not carpeta_mes.is_dir():
+            continue
+        mes_num = _parse_mes_carpeta(carpeta_mes.name)
+        if mes_num is None:
+            continue
+
+        for carpeta_dia in sorted(carpeta_mes.iterdir()):
+            if not carpeta_dia.is_dir():
+                continue
+            fecha = _parse_fecha_carpeta_dia(carpeta_dia.name, anio)
+            if fecha is None:
+                continue
+            if fecha_desde is not None and fecha < fecha_desde:
+                continue
+
+            carpetas_dia_totales += 1
+            pdfs = sorted(carpeta_dia.glob("*.pdf"))
+            if not pdfs:
+                continue
+
+            for pdf in pdfs:
+                if fecha < corte_v2:
+                    pdfs_v1.append((fecha, pdf))
+                else:
+                    pdfs_v2.append((fecha, pdf))
+
+    pdfs_v1_sorted = [p for _, p in sorted(pdfs_v1, key=lambda x: (x[0], x[1].name))]
+    pdfs_v2_sorted = [p for _, p in sorted(pdfs_v2, key=lambda x: (x[0], x[1].name))]
+
+    LOGGER.info(
+        f"Descubrimiento PDF en red → "
+        f"carpetas_día={carpetas_dia_totales} | "
+        f"V1={len(pdfs_v1_sorted)} | V2={len(pdfs_v2_sorted)}"
+    )
+    return pdfs_v1_sorted, pdfs_v2_sorted
 
 
 # =========================================================
-# MATCH ROBUSTO (tokens)
+# DESCUBRIMIENTO EXP — carpetas de mes planas, fecha en nombre PDF
 # =========================================================
-def _tokens_match(swift_clean: str, detalle_clean: str) -> bool:
+def _parse_fecha_pdf_exp(nombre_pdf: str, anio: int) -> Optional[date]:
     """
-    True si swift_clean coincide con detalle_clean por tokens.
-    - nombre >= 2 tokens: exige las primeras 2 palabras + ratio >= TOKEN_MIN_RATIO
-    - nombre 1 token: ese token debe estar en detalle
+    Parsea la fecha desde el nombre del PDF de Exportaciones.
+    Formatos soportados:
+      05112025.pdf    → date(2025, 11, 5)
+      05112025 2.pdf  → date(2025, 11, 5)   (sufijo numérico ignorado)
+      27112025.pdf    → date(2025, 11, 27)
     """
-    st = _tokenize(swift_clean)
-    dt = set(_tokenize(detalle_clean))
-
-    if not st:
-        return False
-
-    overlap = sum(1 for t in st if t in dt)
-    ratio   = overlap / max(len(st), 1)
-
-    if len(st) >= 2:
-        if st[0] not in dt or st[1] not in dt:
-            return False
-        if overlap < TOKEN_MIN_OVERLAP:
-            return False
-        if ratio < TOKEN_MIN_RATIO:
-            return False
-        return True
-
-    return st[0] in dt
+    stem = Path(nombre_pdf).stem.strip()
+    # Extraer solo dígitos del inicio (ignora sufijos como " 2", " 3")
+    m = re.match(r"^(\d{8})", stem.replace(" ", ""))
+    if not m:
+        return None
+    digits = m.group(1)   # DDMMYYYY
+    try:
+        dia  = int(digits[0:2])
+        mes  = int(digits[2:4])
+        anio_ = int(digits[4:8])
+        return date(anio_, mes, dia)
+    except (ValueError, IndexError):
+        return None
 
 
-# =========================================================
-# PASO 1) LECTURA XLSB COM (A..F, header fila 4)
-# =========================================================
-def read_com_sheet(xlsb_path: Path, sheet_name: str = config.SHEET_COM) -> pd.DataFrame:
-    if not xlsb_path.exists():
-        raise FileNotFoundError(f"No existe el archivo: {xlsb_path}")
+def _descubrir_pdfs_exp(
+    raiz: Path,
+    corte_v2: date,
+    anio: int,
+    fecha_desde: Optional[date] = None,
+) -> tuple:
+    """
+    Recorre la estructura de Exportaciones:
+        raiz/
+          Abril/       05042025.pdf  06042025.pdf ...
+          Mayo/        ...
+          Noviembre/   05112025.pdf  26112025.pdf  26112025 2.pdf ...
 
-    header_idx = HEADER_ROW_1BASED - 1
-    data_rows: List[List] = []
-    headers = None
+    - No hay subcarpetas de día (PDFs directamente en la carpeta del mes)
+    - La fecha se extrae del nombre del archivo (DDMMYYYY)
+    - PDFs anteriores a fecha_desde son ignorados
+    - Antes de corte_v2 → V1, desde corte_v2 → V2
 
-    with open_workbook(str(xlsb_path)) as wb:
-        with wb.get_sheet(sheet_name) as sheet:
-            for r_idx, row in enumerate(sheet.rows()):
-                if r_idx < header_idx:
+    Retorna (pdfs_v1: List[Path], pdfs_v2: List[Path]) ordenados por fecha y nombre.
+    """
+    if not raiz.exists():
+        LOGGER.warning(
+            f"DIR_SWIFT_RAIZ_EXP no existe o no es accesible: {raiz}\n"
+            "Se usarán carpetas locales DIR_PDFS_V1_EXP / DIR_PDFS_V2_EXP como fallback."
+        )
+        return [], []
+
+    pdfs_v1: List[tuple] = []
+    pdfs_v2: List[tuple] = []
+    sin_fecha = 0
+
+    for carpeta_mes in sorted(raiz.iterdir()):
+        if not carpeta_mes.is_dir():
+            continue
+        mes_num = _parse_mes_carpeta(carpeta_mes.name)
+        if mes_num is None:
+            LOGGER.debug(f"[EXP] Carpeta de mes no reconocida: {carpeta_mes.name}")
+            continue
+
+        for pdf_path in sorted(carpeta_mes.glob("*.pdf")):
+            fecha = _parse_fecha_pdf_exp(pdf_path.name, anio)
+
+            if fecha is None:
+                # Fallback: construir fecha aproximada desde mes de la carpeta
+                try:
+                    fecha = date(anio, mes_num, 1)
+                except ValueError:
+                    sin_fecha += 1
                     continue
-                values = [cell.v for cell in row[:MAX_COLS]]
-                if r_idx == header_idx:
-                    headers = [str(v).strip() if v is not None else "" for v in values]
-                    continue
-                if headers is None:
-                    raise RuntimeError("No se detectó header en fila 4 del XLSB.")
-                if all(v is None or str(v).strip() == "" for v in values):
-                    continue
-                data_rows.append(values)
 
-    df = pd.DataFrame(data_rows, columns=headers)
-    df.columns = [str(c).replace("\u00A0", " ").strip() for c in df.columns]
-    LOGGER.info(f"XLSB leído → filas={len(df)} | cols={list(df.columns)}")
-    return df
+            if fecha_desde is not None and fecha < fecha_desde:
+                continue
+
+            if fecha < corte_v2:
+                pdfs_v1.append((fecha, pdf_path))
+            else:
+                pdfs_v2.append((fecha, pdf_path))
+
+    pdfs_v1_sorted = [p for _, p in sorted(pdfs_v1, key=lambda x: (x[0], x[1].name))]
+    pdfs_v2_sorted = [p for _, p in sorted(pdfs_v2, key=lambda x: (x[0], x[1].name))]
+
+    LOGGER.info(
+        f"[EXP] Descubrimiento PDF → "
+        f"V1={len(pdfs_v1_sorted)} | V2={len(pdfs_v2_sorted)} | "
+        f"sin_fecha={sin_fecha}"
+    )
+    return pdfs_v1_sorted, pdfs_v2_sorted
 
 
 # =========================================================
-# PASO 2) FILTROS FECHA + INDICA=Imp
+# TOKENS A IGNORAR EN FUZZY MATCHING DE PROVEEDORES
 # =========================================================
-def filter_com_df(df: pd.DataFrame) -> pd.DataFrame:
-    if df.empty:
-        LOGGER.warning("COM viene vacío antes de filtrar.")
+LEGAL_TOKENS = {
+    "SA", "SAS", "S.A", "S.A.S", "S A", "S A S",
+    "LTDA", "LTD", "LTD.", "LIMITED",
+    "CO", "CO.", "COMPANY",
+    "INC", "INC.", "CORP", "CORPORATION",
+    "LLC", "SPA", "S.P.A",
+    "GMBH", "BV", "B.V", "SRL", "S.R.L", "AG", "NV",
+}
+
+COUNTRY_TOKENS = {
+    "CHINA", "TURKEY", "COLOMBIA", "PANAMA",
+    "US", "USA", "ESPANA", "SPAIN",
+}
+
+
+# =========================================================
+# NORMALIZACIÓN DE NOMBRES DE PROVEEDORES
+# =========================================================
+def _strip_accents(s: str) -> str:
+    nfkd = unicodedata.normalize("NFKD", s)
+    return "".join(c for c in nfkd if not unicodedata.combining(c))
+
+
+def _normalize_name(s: str) -> str:
+    if not s:
+        return ""
+    s = str(s).strip()
+    if not s:
+        return ""
+    s = _strip_accents(s).upper()
+    s = re.sub(r"[^A-Z0-9\s]", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    tokens = [t for t in s.split() if t not in LEGAL_TOKENS and t not in COUNTRY_TOKENS]
+    return " ".join(tokens).strip() or s
+
+
+def _get_best_match(
+    query: str,
+    choices_norm: List[str],
+    choices_raw: List[str],
+) -> Tuple[Optional[str], int]:
+    q_norm = _normalize_name(query)
+    if not q_norm:
+        return None, 0
+
+    try:
+        from rapidfuzz import process, fuzz
+        res = process.extractOne(q_norm, choices_norm, scorer=fuzz.token_set_ratio)
+        if not res:
+            return None, 0
+        _, score, idx = res
+        return choices_raw[idx], int(score)
+    except ImportError:
+        import difflib
+        best_score = 0
+        best_idx   = None
+        for i, cn in enumerate(choices_norm):
+            score = int(difflib.SequenceMatcher(None, q_norm, cn).ratio() * 100)
+            if score > best_score:
+                best_score = score
+                best_idx   = i
+        if best_idx is None:
+            return None, 0
+        return choices_raw[best_idx], best_score
+
+
+# =========================================================
+# RESULTADOS OCR → DATAFRAME
+# =========================================================
+def _results_to_df(results: List[Dict], version_name: str) -> pd.DataFrame:
+    rows = []
+    for r in results:
+        receiver  = r.get("receiver")
+        date_     = r.get("date")
+        amount_   = r.get("amount")
+        proveedor = r.get("beneficiary")
+        estado = "Completo" if (receiver and date_ and amount_ and proveedor) else "Incompleto"
+        rows.append({
+            "Nombre archivo": r.get("file_name"),
+            "Receiver":       receiver,
+            "Date":           date_,
+            "Amount":         amount_,
+            "Proveedor":      proveedor,
+            "Estado":         estado,
+            "Version":        version_name,
+        })
+    return pd.DataFrame(rows, columns=[
+        "Nombre archivo", "Receiver", "Date", "Amount",
+        "Proveedor", "Estado", "Version",
+    ])
+
+
+# =========================================================
+# ENRIQUECIMIENTO 1: PROVEEDOR (fuzzy contra Bd Proveedores)
+# =========================================================
+def _enrich_proveedor(
+    df: pd.DataFrame,
+    bd_path: Path,
+    threshold: int = config.FUZZY_THRESHOLD,
+) -> pd.DataFrame:
+    if not bd_path.exists():
+        LOGGER.warning(f"Bd Proveedores no encontrada: {bd_path}. Se omite enriquecimiento.")
         return df
 
-    cols_map = {str(c).strip().upper(): c for c in df.columns}
+    # engine="openpyxl" explícito para evitar deprecation warnings y garantizar consistencia
+    bd = pd.read_excel(bd_path, engine="openpyxl")
+    bd.columns = [str(c).strip() for c in bd.columns]
 
-    if "FECHA" not in cols_map:
-        raise KeyError(f"No encuentro columna FECHA. Columnas: {list(df.columns)}")
-    if "INDICA" not in cols_map:
-        raise KeyError(f"No encuentro columna INDICA. Columnas: {list(df.columns)}")
+    if config.BD_PROV_COL_NOMBRE not in bd.columns:
+        raise KeyError(
+            f"No se encontró columna '{config.BD_PROV_COL_NOMBRE}' en {bd_path.name}. "
+            f"Columnas disponibles: {list(bd.columns)}"
+        )
 
-    out = df.copy()
-    out["_FECHA_DT"] = _parse_fecha_excel_series(out[cols_map["FECHA"]])
-    out["_INDICA_NORM"] = (
-        out[cols_map["INDICA"]]
+    choices_raw: List[str] = (
+        bd[config.BD_PROV_COL_NOMBRE]
+        .dropna()
         .astype(str)
-        .str.replace("\u00A0", " ", regex=False)
         .str.strip()
-        .str.lower()
+        .loc[lambda s: s != ""]
+        .drop_duplicates()
+        .tolist()
     )
+    choices_norm = [_normalize_name(x) for x in choices_raw]
 
-    before = len(out)
-    out = out.loc[out["_FECHA_DT"].notna()].copy()
-    out = out.loc[out["_FECHA_DT"] >= FECHA_MIN].copy()
-    out = out.loc[out["_INDICA_NORM"] == "imp"].copy()
-    out = out.drop(columns=["_FECHA_DT", "_INDICA_NORM"], errors="ignore").reset_index(drop=True)
+    if not choices_raw:
+        LOGGER.warning("Bd Proveedores sin candidatos válidos. Se omite enriquecimiento.")
+        return df
+
+    out      = df.copy()
+    replaced = 0
+    reviewed = 0
+
+    # Valores que representan ausencia de proveedor — no enriquecer
+    _EMPTY_PROV = {"", "nan", "none", "nat", "n/a", "nd", "null"}
+
+    for idx, prov in out["Proveedor"].items():
+        prov_str = str(prov).strip().lower() if prov is not None else ""
+        if not prov_str or prov_str in _EMPTY_PROV:
+            continue
+        prov = str(prov).strip()  # versión limpia con capitalización original
+        reviewed += 1
+        best, score = _get_best_match(str(prov), choices_norm, choices_raw)
+        if best and score >= threshold and best != prov:
+            out.at[idx, "Proveedor"] = best
+            replaced += 1
+        if config.DEBUG and reviewed <= 10:
+            LOGGER.debug(f"Fuzzy: '{prov}' → '{best}' | score={score}")
 
     LOGGER.info(
-        f"Filtro COM: inicio={before} → resultado={len(out)} "
-        f"(FECHA>={FECHA_MIN.date()}, INDICA=Imp)"
+        f"Enriquecimiento Proveedor: revisados={reviewed} | "
+        f"reemplazados={replaced} | threshold={threshold}"
     )
     return out
 
 
 # =========================================================
-# PASO 3) CRUCE CON SWIFT_COMPLETOS → FORMULARIO
+# ENRIQUECIMIENTO 2: PAIS / CIUDAD (cruce con Bd Swift)
 # =========================================================
-def _build_com_keys(df_com: pd.DataFrame) -> pd.DataFrame:
-    """
-    Prepara COM con columnas para el cruce:
-      fecha_key      → YYYY-MM-DD
-      detalle_clean  → DETALLE antes del '#', normalizado
-      debito_num     → DEBITO como float
-      formulario_str → FORMULARIO como string (tal cual, sin lstrip)
-      row_order      → orden original
-    """
-    cols_map = {str(c).strip().upper(): c for c in df_com.columns}
-    required = ["FECHA", "DETALLE", "FORMULARIO", "DEBITO"]
-    missing  = [c for c in required if c not in cols_map]
-    if missing:
-        raise KeyError(f"En COM faltan columnas: {missing}. Detectadas: {list(df_com.columns)}")
+def _read_bd_swift(path: Path) -> pd.DataFrame:
+    if not path.exists():
+        raise FileNotFoundError(f"No existe Bd Swift: {path}")
 
-    out = df_com.copy()
-    out["_fecha_dt"]      = _parse_fecha_excel_series(out[cols_map["FECHA"]])
-    out["fecha_key"]      = out["_fecha_dt"].dt.strftime("%Y-%m-%d")
-    out["detalle_clean"]  = out[cols_map["DETALLE"]].apply(_clean_detalle)
-    out["debito_num"]     = out[cols_map["DEBITO"]].apply(_parse_money_to_float)
-    out["formulario_str"] = out[cols_map["FORMULARIO"]].apply(
-        lambda x: ""
-        if x is None or (isinstance(x, float) and pd.isna(x))
-        else re.sub(r"\.0+$", "", str(x).strip()).lstrip("0") or "0"
-    )
-    out["row_order"] = range(len(out))
-    out = out.drop(columns=["_fecha_dt"], errors="ignore")
-    return out
-
-
-def _build_swift_keys(df_swift: pd.DataFrame) -> pd.DataFrame:
-    """
-    Prepara Swift con columnas para el cruce:
-      fecha_key    → YYYY-MM-DD
-      nombre_clean → Nombre archivo limpio
-      amount_num   → Amount como float
-    """
-    out  = df_swift.copy()
-    miss = [c for c in ("Date", "Nombre archivo", "Amount", "id") if c not in out.columns]
-    if miss:
-        raise KeyError(f"Swift_completos falta(n) columna(s) {miss}. Detectadas: {list(out.columns)}")
-
-    out["_date_dt"]     = pd.to_datetime(out["Date"], errors="coerce")
-    out["fecha_key"]    = out["_date_dt"].dt.strftime("%Y-%m-%d")
-    out["nombre_clean"] = out["Nombre archivo"].apply(_clean_nombre_archivo)
-    out["amount_num"]   = out["Amount"].apply(_parse_money_to_float)
-    out = out.drop(columns=["_date_dt"], errors="ignore")
-    return out
-
-
-def _update_formulario_for_sheet(
-    df_swift_sheet: pd.DataFrame,
-    df_com: pd.DataFrame,
-) -> pd.DataFrame:
-    """
-    Cruza COM → Swift para poblar 'Formulario'.
-
-    Lógica (fiel al archivo de referencia):
-      1. Para cada Swift, busca filas COM con la misma fecha
-      2. Filtra candidatos por match de tokens (Nombre archivo vs DETALLE)
-      3. 1 candidato  → asigna FORMULARIO directamente
-      4. N candidatos → si sum(DEBITO) ≈ Amount → concatena formularios con '-'
-                        si no cuadra → no asigna
-    """
-    if df_swift_sheet.empty:
-        return df_swift_sheet
-
-    out = df_swift_sheet.copy()
-    out.columns = [str(c).strip() for c in out.columns]
-
-    if "Formulario" not in out.columns:
-        out["Formulario"] = ""
-
-    com_k   = _build_com_keys(df_com)
-    swift_k = _build_swift_keys(out)
-
-    # Índice COM por fecha para búsqueda rápida
-    com_by_date: Dict[str, pd.DataFrame] = {
-        k: v.copy() for k, v in com_k.groupby("fecha_key")
+    needed = {
+        config.BD_SWIFT_COL_CODIGO,
+        config.BD_SWIFT_COL_PAIS,
+        config.BD_SWIFT_COL_CIUDAD,
     }
 
-    updated       = 0
-    multi_matched = 0
-    multi_ok      = 0
-    multi_fail    = 0
+    # engine="openpyxl" explícito para consistencia
+    xls = pd.ExcelFile(path, engine="openpyxl")
+    for sh in xls.sheet_names:
+        df = pd.read_excel(path, sheet_name=sh, engine="openpyxl")
+        df.columns = [str(c).strip() for c in df.columns]
+        if needed.issubset(set(df.columns)):
+            LOGGER.info(f"Bd Swift: usando hoja '{sh}'")
+            return df
 
-    for _, srow in swift_k.iterrows():
-        sid      = srow["id"]
-        s_fecha  = srow["fecha_key"]
-        s_name   = srow["nombre_clean"]
-        s_amount = srow["amount_num"]
-
-        if not isinstance(s_fecha, str) or not s_fecha:
-            continue
-
-        com_day = com_by_date.get(s_fecha)
-        if com_day is None or com_day.empty:
-            continue
-
-        # Filtrar por match de tokens
-        cand = com_day.loc[
-            com_day["detalle_clean"].apply(lambda d: _tokens_match(s_name, d))
-        ].copy()
-
-        if cand.empty:
-            continue
-
-        if len(cand) == 1:
-            form_val = str(cand.iloc[0]["formulario_str"]).strip()
-            if form_val and form_val.lower() != "none":
-                out.loc[out["id"] == sid, "Formulario"] = form_val
-                updated += 1
-            continue
-
-        # Múltiples candidatos → verificar suma de débitos
-        multi_matched += 1
-        deb_sum = cand["debito_num"].sum(skipna=True)
-
-        if pd.notna(deb_sum) and pd.notna(s_amount) and abs(deb_sum - s_amount) <= AMOUNT_TOL:
-            cand  = cand.sort_values("row_order")
-            forms = [
-                str(x).strip()
-                for x in cand["formulario_str"].tolist()
-                if str(x).strip() not in ("", "none", "nan", "nat")
-            ]
-            if forms:
-                out.loc[out["id"] == sid, "Formulario"] = "-".join(forms)
-                updated += 1
-                multi_ok += 1
-        else:
-            multi_fail += 1
-
-    LOGGER.info(
-        f"Swift actualizado Formulario: updated={updated} | "
-        f"multi_matched={multi_matched} | multi_ok={multi_ok} | multi_fail={multi_fail}"
+    raise KeyError(
+        f"No se encontró hoja con columnas requeridas: {needed}. "
+        f"Hojas disponibles: {xls.sheet_names}"
     )
+
+
+def _build_bd_swift_norm(bd_swift_path: Path) -> pd.DataFrame:
+    bd = _read_bd_swift(bd_swift_path)
+    out = bd[[
+        config.BD_SWIFT_COL_CODIGO,
+        config.BD_SWIFT_COL_PAIS,
+        config.BD_SWIFT_COL_CIUDAD,
+    ]].copy()
+    out.rename(columns={config.BD_SWIFT_COL_CODIGO: "swift_original"}, inplace=True)
+    out["swift_norm"] = out["swift_original"].apply(normalize_swift_11)
+    out = out.loc[out["swift_norm"] != ""].copy()
+    out = out.drop_duplicates(subset=["swift_norm"], keep="first")
     return out
 
 
-# =========================================================
-# PASO 4) CRUCE ORIGEN DESTINO → LLAVE (Swift)
-# =========================================================
-def _read_od_mapping(path: Path) -> pd.DataFrame:
-    """Lee Nombre personalizado → Llave carga masiva desde origenDestino."""
-    if not path.exists():
-        raise FileNotFoundError(f"No existe origenDestino.xlsx: {path}")
-
-    df = pd.read_excel(path, sheet_name=config.SHEET_OD_DATOS)
-    df.columns = [str(c).replace("\u00A0", " ").strip() for c in df.columns]
-
-    for col in (config.OD_COL_NOMBRE, config.OD_COL_LLAVE):
-        if col not in df.columns:
-            raise KeyError(
-                f"No se encontró columna '{col}' en {path.name}. "
-                f"Columnas disponibles: {list(df.columns)}"
-            )
-
-    out = df[[config.OD_COL_NOMBRE, config.OD_COL_LLAVE]].copy()
-    out[config.OD_COL_NOMBRE] = out[config.OD_COL_NOMBRE].apply(_normalize_text_key)
-    out[config.OD_COL_LLAVE]  = out[config.OD_COL_LLAVE].astype(str).str.strip()
-
-    out = (
-        out
-        .loc[out[config.OD_COL_NOMBRE] != ""]
-        .loc[out[config.OD_COL_LLAVE]  != ""]
-        .drop_duplicates(subset=[config.OD_COL_NOMBRE], keep="first")
-        .reset_index(drop=True)
-    )
-
-    LOGGER.info(f"OrigenDestino mapping cargado: {len(out)} llaves únicas.")
-    return out
-
-
-def _apply_llave_to_sheet(
-    df_swift_sheet: pd.DataFrame,
-    od_map: pd.DataFrame,
+def _apply_swift_country_city(
+    df: pd.DataFrame,
+    bd_swift_norm: pd.DataFrame,
 ) -> pd.DataFrame:
-    """
-    Aplica cruce Llave a una hoja Swift.
+    out = df.copy()
+    out["receiver_norm"] = out["Receiver"].apply(normalize_swift_11)
 
-    El 'Nombre personalizado' en Swift está truncado a 50 caracteres,
-    por lo que no coincide exactamente con origenDestino.
-    Ejemplo:
-      Swift:       'GESI TEKSTIL ITHALAT IHRACAT TICARE PNBPUS3NNYC'
-      origenDestino: 'GESI TEKSTIL ITHALAT IHRACAT PNBPUS3NNYC'
+    bd_map = bd_swift_norm[[
+        "swift_norm",
+        config.BD_SWIFT_COL_PAIS,
+        config.BD_SWIFT_COL_CIUDAD,
+    ]].rename(columns={
+        config.BD_SWIFT_COL_PAIS:   "__pais_bd",
+        config.BD_SWIFT_COL_CIUDAD: "__ciudad_bd",
+    })
 
-    Estrategia: match por tokens con las mismas reglas que Paso 3
-      - Las primeras 2 palabras del Swift deben estar en origenDestino
-      - Token overlap ratio >= TOKEN_MIN_RATIO
-    """
-    if df_swift_sheet.empty:
-        return df_swift_sheet
-
-    out = df_swift_sheet.copy()
-    out.columns = [str(c).strip() for c in out.columns]
-
-    if config.OD_COL_NOMBRE not in out.columns:
-        raise KeyError("Swift_completos no tiene columna 'Nombre personalizado'.")
-    if "Llave" not in out.columns:
-        out["Llave"] = ""
-
-    # Preparar lista de (tokens_od, llave) para búsqueda por tokens
-    od_entries = [
-        (_tokenize(nombre), llave)
-        for nombre, llave in zip(od_map[config.OD_COL_NOMBRE], od_map[config.OD_COL_LLAVE])
-        if nombre and llave
-    ]
-
-    def _find_llave(nombre_swift_norm: str) -> str:
-        """Busca la llave en origenDestino por token overlap."""
-        if not nombre_swift_norm:
-            return ""
-
-        st = _tokenize(nombre_swift_norm)
-        if not st:
-            return ""
-
-        best_llave = ""
-        best_ratio = 0.0
-
-        for od_tokens, llave in od_entries:
-            od_set  = set(od_tokens)
-            overlap = sum(1 for t in st if t in od_set)
-            ratio   = overlap / max(len(st), len(od_tokens), 1)
-
-            # Exige primeras 2 palabras coincidan (igual que _tokens_match)
-            if len(st) >= 2 and (st[0] not in od_set or st[1] not in od_set):
-                continue
-            if overlap < TOKEN_MIN_OVERLAP:
-                continue
-            if ratio < TOKEN_MIN_RATIO:
-                continue
-
-            if ratio > best_ratio:
-                best_ratio = ratio
-                best_llave = llave
-
-        return best_llave
-
-    out["_np_norm"]   = out[config.OD_COL_NOMBRE].apply(_normalize_text_key)
-    out["_llave_cur"] = out["Llave"].fillna("").astype(str).str.strip()
-
-    before_empty = (out["_llave_cur"] == "").sum()
-    filled = 0
-    sin_match_nombres = []
-
-    for idx, row in out.iterrows():
-        if row["_llave_cur"] != "":
-            continue  # ya tiene llave, no sobreescribir
-
-        llave_nueva = _find_llave(row["_np_norm"])
-
-        if llave_nueva:
-            out.at[idx, "Llave"] = llave_nueva
-            filled += 1
-        else:
-            sin_match_nombres.append(row["_np_norm"])
-
-    after_empty = (out["Llave"].fillna("").astype(str).str.strip() == "").sum()
-    LOGGER.info(
-        f"Cruce Llave aplicado: filled={filled} | "
-        f"empty_before={before_empty} | empty_after={after_empty}"
+    out = out.merge(bd_map, how="left", left_on="receiver_norm", right_on="swift_norm")
+    out["Pais"]   = out["__pais_bd"]
+    out["Ciudad"] = out["__ciudad_bd"]
+    out = out.drop(
+        columns=["receiver_norm", "swift_norm", "__pais_bd", "__ciudad_bd"],
+        errors="ignore",
     )
-
-    if sin_match_nombres:
-        unicos = list(dict.fromkeys(sin_match_nombres))  # dedup preservando orden
-        LOGGER.warning(
-            f"Sin llave ({len(unicos)} 'Nombre personalizado' únicos sin match):\n"
-            + "\n".join(f"  '{n}'" for n in unicos[:20])
-        )
-
-    out = out.drop(columns=["_np_norm", "_llave_cur"], errors="ignore")
+    matches = out["Pais"].notna().sum()
+    LOGGER.info(f"Cruce Bd Swift: {matches}/{len(out)} coincidencias")
     return out
 
 
 # =========================================================
-# PASO 5) FORMULARIO (Swift) → CONSECUTIVO (origenDestino)
+# POST-PROCESO
 # =========================================================
-def _extract_consecutivos_from_formulario(val) -> List[str]:
-    """
-    '12030-None-12028' → ['12030', '12028']
-    Ignora None / vacíos, extrae solo dígitos.
-    """
-    if val is None or (isinstance(val, float) and pd.isna(val)):
-        return []
-    s = str(val).strip()
-    if not s:
-        return []
-    parts = [p.strip() for p in s.split("-")]
-    out = []
-    for p in parts:
-        if not p or p.lower() == "none":
-            continue
-        m = re.search(r"\d+", p)
-        if m:
-            norm = m.group(0).lstrip("0") or "0"
-            out.append(norm)
+def _recortar_nombre_personalizado(valor, limite: int = 50):
+    if pd.isna(valor):
+        return valor
+    val = str(valor).strip()
+    if len(val) <= limite:
+        return val
+    partes = val.rsplit(" ", 1)
+    if len(partes) != 2:
+        return val
+    nombre, swift = partes[0], partes[1]
+    palabras = nombre.split(" ")
+    while len(" ".join(palabras) + " " + swift) > limite and len(palabras) > 1:
+        palabras.pop()
+    return " ".join(palabras) + " " + swift
+
+
+def _add_nombre_personalizado(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    out["Nombre personalizado"] = out.apply(
+        lambda r: build_nombre_personalizado(r.get("Proveedor"), r.get("Receiver")),
+        axis=1,
+    )
+    out["Nombre personalizado"] = out["Nombre personalizado"].apply(
+        lambda v: _recortar_nombre_personalizado(v, limite=50)
+    )
+    out.loc[out["Nombre personalizado"] == "", "Nombre personalizado"] = pd.NA
     return out
 
 
-def _normalize_consecutivo_series(s: pd.Series) -> pd.Series:
-    """Normaliza Consecutivo a string de dígitos sin ceros iniciales (12029.0 → '12029')."""
-    def _one(x):
-        if x is None or (isinstance(x, float) and pd.isna(x)):
-            return ""
-        if isinstance(x, int) and not isinstance(x, bool):
-            return str(x).lstrip("0") or "0"
-        if isinstance(x, float):
-            if pd.isna(x):
-                return ""
-            if float(x).is_integer():
-                return str(int(x)).lstrip("0") or "0"
-            return str(x).strip()
-        sx = str(x).strip()
-        sx = re.sub(r"\.0+$", "", sx)
-        m  = re.search(r"\d+", sx)
-        return (m.group(0).lstrip("0") or "0") if m else ""
-    return s.apply(_one)
+def _upper_pais_ciudad(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    for col in ("Pais", "Ciudad"):
+        if col in out.columns:
+            out[col] = out[col].astype("string").str.strip().str.upper()
+    return out
 
 
-def _update_od_llave(path: Path, df_swift_all: pd.DataFrame) -> None:
-    """
-    Actualiza SOLO la columna 'Llave Origen Destino' en origenDestino.
+def _clean_amount_column(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    if "Amount" in out.columns:
+        out["Amount"] = out["Amount"].apply(clean_amount_value)
+        out.loc[out["Amount"].astype(str).str.strip() == "", "Amount"] = pd.NA
+    return out
 
-    Usa openpyxl directamente para escribir únicamente las celdas que cambian,
-    sin tocar fechas, números ni formato de ninguna otra columna.
 
-    Lógica:
-      1. Lee Swift.Formulario, separa por '-' → lista de formularios
-      2. Para cada formulario busca en Consecutivo de origenDestino
-      3. Si coincide → escribe la Llave en 'Llave Origen Destino' de esa fila
-    """
-    if not path.exists():
-        raise FileNotFoundError(f"No existe origenDestino.xlsx: {path}")
+def _recalc_estado(df: pd.DataFrame) -> pd.DataFrame:
+    def _is_completo(r) -> bool:
+        return all([
+            pd.notna(r.get("Receiver"))  and str(r.get("Receiver")).strip()  != "",
+            pd.notna(r.get("Date"))      and str(r.get("Date")).strip()      != "",
+            pd.notna(r.get("Amount"))    and str(r.get("Amount")).strip()    != "",
+            pd.notna(r.get("Proveedor")) and str(r.get("Proveedor")).strip() != "",
+        ])
+    out = df.copy()
+    out["Estado"] = out.apply(lambda r: "Completo" if _is_completo(r) else "Incompleto", axis=1)
+    return out
 
-    if df_swift_all.empty:
-        LOGGER.info("PASO 5 → Swift vacío. No hay nada que cruzar hacia origenDestino.")
-        return
 
-    for col in ("Formulario", "Llave"):
-        if col not in df_swift_all.columns:
-            raise KeyError(f"Swift_completos no tiene columna '{col}' requerida para PASO 5.")
+# =========================================================
+# ID DETERMINÍSTICO
+# =========================================================
+def _make_record_id(version: str, file_name: str) -> str:
+    base = f"origen_destino_dian|{version}|{file_name}".strip()
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, base))
 
-    # ── Construir mapping formulario_norm → llave desde Swift ──
-    consec_to_llave: Dict[str, str] = {}
 
-    for _, r in df_swift_all.iterrows():
-        llave = str(r.get("Llave", "") or "").strip()
-        if not llave or llave.lower() in ("nan", "none", ""):
-            continue
-        for f in _extract_consecutivos_from_formulario(r.get("Formulario", "")):
-            if f not in consec_to_llave:
-                consec_to_llave[f] = llave
-
-    if not consec_to_llave:
-        LOGGER.info("PASO 5 → No hay formularios con llave en Swift_completos.")
-        return
-
-    LOGGER.info(
-        f"PASO 5: {len(consec_to_llave)} formularios con llave. "
-        f"Muestra: {list(consec_to_llave.items())[:5]}"
+def _add_ids_and_tail_cols(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    out["id"] = out.apply(
+        lambda r: _make_record_id(
+            str(r.get("Version", "")),
+            str(r.get("Nombre archivo", "")),
+        ),
+        axis=1,
     )
+    out["Formulario"] = pd.NA
+    out["Llave"]      = pd.NA
+    cols = ["id"] + [c for c in out.columns if c != "id"]
+    return out[cols]
 
-    # ── Abrir workbook con openpyxl (preserva todos los formatos) ──
-    from openpyxl import load_workbook
 
-    try:
-        wb = load_workbook(path)
-    except PermissionError:
-        raise PermissionError(
-            f"\n{'='*60}\n"
-            f"  No se pudo abrir origenDestino.xlsx — está abierto en Excel.\n"
-            f"  Cerralo y volvé a ejecutar.\n"
-            f"  Ruta: {path}\n"
-            f"{'='*60}"
-        )
+# =========================================================
+# EXPORT EXCEL
+# =========================================================
+def _ensure_final_columns(df: pd.DataFrame) -> pd.DataFrame:
+    return reorder_columns(df, config.FINAL_COLUMNS_ORDER)
 
-    if config.SHEET_OD_ORIGEN not in wb.sheetnames:
-        raise KeyError(
-            f"No existe hoja '{config.SHEET_OD_ORIGEN}' en origenDestino.xlsx. "
-            f"Hojas disponibles: {wb.sheetnames}"
-        )
 
-    ws = wb[config.SHEET_OD_ORIGEN]
-
-    # ── Localizar columnas por header en fila 1 ─────────────────
-    headers = {
-        str(cell.value).replace("\u00A0", " ").strip(): cell.column
-        for cell in ws[1]
-        if cell.value is not None
-    }
-
-    if config.OD2_COL_CONSECUTIVO not in headers:
-        raise KeyError(
-            f"No se encontró columna '{config.OD2_COL_CONSECUTIVO}' "
-            f"en hoja '{config.SHEET_OD_ORIGEN}'. Headers: {list(headers.keys())}"
-        )
-
-    col_consec   = headers[config.OD2_COL_CONSECUTIVO]
-    col_llave_od = headers.get(config.OD2_COL_LLAVE_OD)
-
-    # Si la columna Llave Origen Destino no existe, crearla al final
-    if col_llave_od is None:
-        col_llave_od = ws.max_column + 1
-        ws.cell(row=1, column=col_llave_od, value=config.OD2_COL_LLAVE_OD)
-        LOGGER.info(f"Columna '{config.OD2_COL_LLAVE_OD}' creada en columna {col_llave_od}.")
-
-    # ── Remover validación de datos de la columna Llave Origen Destino ──
-    # La columna tiene un dropdown que referencia otra hoja. Si se deja activo,
-    # Excel puede rechazar los valores escritos por openpyxl o marcar error al abrir.
-    # Se elimina solo la validación de esa columna; el resto del sheet queda intacto.
-    from openpyxl.utils import get_column_letter
-    llave_col_letter = get_column_letter(col_llave_od)
-
-    validaciones_a_conservar = []
-    removidas = 0
-    for dv in ws.data_validations.dataValidation:
-        # Verificar si algún rango de esta validación incluye la columna llave
-        toca_columna = any(
-            llave_col_letter in str(rng)
-            for rng in dv.sqref.ranges
-        )
-        if toca_columna:
-            removidas += 1
-        else:
-            validaciones_a_conservar.append(dv)
-
-    ws.data_validations.dataValidation = validaciones_a_conservar
-    if removidas:
-        LOGGER.info(
-            f"PASO 5: {removidas} validación(es) de datos removida(s) "
-            f"de columna '{config.OD2_COL_LLAVE_OD}' (columna {llave_col_letter})."
-        )
-
-    # ── Recorrer filas y escribir SOLO las celdas que cambian ───
-    nuevos = actualizados = sin_match = 0
-
-    for row_idx in range(2, ws.max_row + 1):
-        raw_val = ws.cell(row=row_idx, column=col_consec).value
-
-        if raw_val is None:
-            continue
-
-        # Normalizar consecutivo sin ceros iniciales (igual que formulario_str)
-        if isinstance(raw_val, (int, float)):
-            consec_norm = str(int(raw_val)).lstrip("0") or "0"
-        else:
-            sx = re.sub(r"\.0+$", "", str(raw_val).strip())
-            m  = re.search(r"\d+", sx)
-            consec_norm = (m.group(0).lstrip("0") or "0") if m else ""
-
-        if not consec_norm:
-            continue
-
-        nueva_llave = consec_to_llave.get(consec_norm, "")
-        if not nueva_llave:
-            sin_match += 1
-            continue
-
-        cell_llave   = ws.cell(row=row_idx, column=col_llave_od)
-        llave_actual = str(cell_llave.value or "").strip()
-
-        if not llave_actual:
-            cell_llave.value = nueva_llave
-            nuevos += 1
-        elif llave_actual != nueva_llave:
-            cell_llave.value = nueva_llave
-            actualizados += 1
-
-    LOGGER.info(
-        f"PASO 5 → nuevos={nuevos} | actualizados={actualizados} | sin_match={sin_match}"
-    )
-
-    # ── Guardar preservando todo el formato original ─────────────
-    try:
-        wb.save(path)
-        LOGGER.info(
-            f"origenDestino.xlsx guardado "
-            f"(solo '{config.OD2_COL_LLAVE_OD}' modificado, resto intacto)."
-        )
-    except PermissionError:
-        raise PermissionError(
-            f"\n{'='*60}\n"
-            f"  No se pudo guardar origenDestino.xlsx — está abierto en Excel.\n"
-            f"  Cerralo y volvé a ejecutar.\n"
-            f"  Ruta: {path}\n"
-            f"{'='*60}"
-        )
+def _write_swift_excel(
+    df_v1: pd.DataFrame,
+    df_v2: pd.DataFrame,
+    output_path: Path,
+    label: str = "",
+) -> None:
+    v1 = _ensure_final_columns(df_v1)
+    v2 = _ensure_final_columns(df_v2)
+    # write_sheets usa pd.ExcelWriter(engine="openpyxl") internamente
+    write_sheets(output_path, {config.SHEET_V1: v1, config.SHEET_V2: v2}, context=label)
 
 
 # =========================================================
 # FUNCIÓN PRINCIPAL — llamada desde main.py
 # =========================================================
-def run_cruce_completo() -> Dict:
+def run_pipeline_completo(cache=None, debug: bool = False, tipo: str = "imp") -> Dict:
     """
-    Ejecuta los 5 pasos del cruce.
-    Retorna dict con estadísticas: formularios, llaves.
+    Ejecuta el pipeline completo de extracción y enriquecimiento.
+
+    Parámetros:
+        cache : instancia de PdfCache
+        debug : activa logs detallados
+        tipo  : "imp" (Importaciones) | "exp" (Exportaciones)
+
+    Retorna dict con: nuevos_v1, nuevos_v2, completos, incompletos, errores
     """
-    LOGGER.info("=== INICIO CRUCE FORMULARIOS + LLAVE ===")
+    tipo = tipo.lower().strip()
+    if tipo not in ("imp", "exp"):
+        raise ValueError(f"tipo debe ser 'imp' o 'exp', recibido: '{tipo}'")
+
+    LOGGER.info(f"=== INICIO PIPELINE {tipo.upper()} ===")
+
+    # ── Configuración según tipo ───────────────────────────
+    if tipo == "imp":
+        raiz           = config.DIR_SWIFT_RAIZ_IMP
+        fecha_desde    = config.SWIFT_FECHA_DESDE_IMP
+        dir_v1_local   = config.DIR_PDFS_V1_IMP
+        dir_v2_local   = config.DIR_PDFS_V2_IMP
+        out_completos  = config.SWIFT_COMPLETOS_IMP
+        out_manuales   = config.SWIFT_MANUALES_IMP
+        fn_reader_v1   = process_folder_v1
+        fn_reader_v2   = process_folder_v2
+        fn_discover    = _descubrir_pdfs_por_version
+    else:  # exp
+        raiz           = config.DIR_SWIFT_RAIZ_EXP
+        fecha_desde    = config.SWIFT_FECHA_DESDE_EXP
+        dir_v1_local   = config.DIR_PDFS_V1_EXP
+        dir_v2_local   = config.DIR_PDFS_V2_EXP
+        out_completos  = config.SWIFT_COMPLETOS_EXP
+        out_manuales   = config.SWIFT_MANUALES_EXP
+        fn_reader_v1   = process_folder_v1_exp
+        fn_reader_v2   = process_folder_v2_exp
+        fn_discover    = _descubrir_pdfs_exp
 
     validate_input_files(
-        config.XLSB_CUENTA_COM,
-        config.SWIFT_COMPLETOS,
-        config.ORIGEN_DESTINO,
-        context="run_formulario",
+        config.BD_PROVEEDORES,
+        config.BD_SWIFT,
+        context=f"run_pipeline_{tipo}",
     )
+    validate_output_dirs(config.DIR_RESULTADOS)
 
-    stats = {"formularios": 0, "llaves": 0}
+    stats = {
+        "nuevos_v1":   0,
+        "nuevos_v2":   0,
+        "completos":   0,
+        "incompletos": 0,
+        "errores":     0,
+    }
 
-    # Paso 1 + 2: Leer y filtrar COM
-    df_com           = read_com_sheet(config.XLSB_CUENTA_COM, config.SHEET_COM)
-    df_com_filtrado  = filter_com_df(df_com)
+    # ── 1) Descubrir PDFs ──────────────────────────────────
+    LOGGER.info(f"Paso 1: Descubriendo PDFs {tipo.upper()} en fuente de red...")
 
-    if df_com_filtrado.empty:
-        LOGGER.warning("COM filtrada vacía. No se puede ejecutar cruce.")
+    if raiz.exists():
+        pdfs_v1, pdfs_v2 = fn_discover(
+            raiz=raiz,
+            corte_v2=config.SWIFT_CORTE_V2,
+            anio=config.SWIFT_AÑO,
+            fecha_desde=fecha_desde,
+        )
+        fuente_v1 = pdfs_v1
+        fuente_v2 = pdfs_v2
+    else:
+        LOGGER.warning(
+            f"Red no disponible [{tipo.upper()}]. Usando carpetas locales: "
+            f"V1={dir_v1_local} | V2={dir_v2_local}"
+        )
+        fuente_v1 = dir_v1_local
+        fuente_v2 = dir_v2_local
+
+    # ── 2) Extracción OCR ──────────────────────────────────
+    LOGGER.info(f"Paso 2: Extracción V1 [{tipo.upper()}]...")
+    results_v1 = fn_reader_v1(fuente_v1, debug=debug, cache=cache)
+    df_v1 = _results_to_df(results_v1, version_name="V1")
+    stats["nuevos_v1"] = len(results_v1)
+
+    LOGGER.info(f"Paso 2: Extracción V2 [{tipo.upper()}]...")
+    results_v2 = fn_reader_v2(fuente_v2, debug=debug, cache=cache)
+    df_v2 = _results_to_df(results_v2, version_name="V2")
+    stats["nuevos_v2"] = len(results_v2)
+
+    if df_v1.empty and df_v2.empty:
+        LOGGER.info("No hay PDFs nuevos que procesar (todos en caché). Pipeline finalizado.")
         return stats
 
-    # Preparar COM keys una sola vez
-    com_keys = _build_com_keys(df_com_filtrado)
+    # ── 3) Enriquecimiento Proveedor ───────────────────────
+    LOGGER.info("Paso 2: Enriquecimiento Proveedor (fuzzy)...")
+    df_v1 = _enrich_proveedor(df_v1, config.BD_PROVEEDORES, threshold=config.FUZZY_THRESHOLD)
+    df_v2 = _enrich_proveedor(df_v2, config.BD_PROVEEDORES, threshold=config.FUZZY_THRESHOLD)
 
-    # Leer Swift_completos
-    df_v1 = read_sheet_safe(config.SWIFT_COMPLETOS, config.SHEET_V1, context="cruces")
-    df_v2 = read_sheet_safe(config.SWIFT_COMPLETOS, config.SHEET_V2, context="cruces")
+    # ── 4) Cruce Bd Swift → País / Ciudad ──────────────────
+    LOGGER.info("Paso 3: Cruce Bd Swift (País/Ciudad)...")
+    bd_swift_norm = _build_bd_swift_norm(config.BD_SWIFT)
+    df_v1 = _apply_swift_country_city(df_v1, bd_swift_norm)
+    df_v2 = _apply_swift_country_city(df_v2, bd_swift_norm)
 
-    # Forzar dtype object para columnas que recibirán strings
-    for df in (df_v1, df_v2):
-        for col in ("Formulario", "Llave"):
-            if col in df.columns:
-                df[col] = df[col].astype(object)
+    # ── 5) Post-proceso ────────────────────────────────────
+    LOGGER.info("Paso 4: Post-proceso (Nombre personalizado, mayúsculas, Amount)...")
+    for apply_fn in [_add_nombre_personalizado, _upper_pais_ciudad, _clean_amount_column]:
+        df_v1 = apply_fn(df_v1)
+        df_v2 = apply_fn(df_v2)
 
-    # Paso 3: Formulario
-    LOGGER.info("Paso 3: Cruce Formulario (COM → Swift por Nombre archivo + fecha)...")
-    df_v1 = _update_formulario_for_sheet(df_v1, com_keys)
-    df_v2 = _update_formulario_for_sheet(df_v2, com_keys)
+    # ── 6) Recálculo de estado ─────────────────────────────
+    df_v1 = _recalc_estado(df_v1)
+    df_v2 = _recalc_estado(df_v2)
 
-    stats["formularios"] = int(
-        df_v1["Formulario"].replace("", pd.NA).notna().sum()
-        + df_v2["Formulario"].replace("", pd.NA).notna().sum()
-    )
+    # ── 7) IDs + columnas finales ──────────────────────────
+    LOGGER.info("Paso 5: Generando IDs y columnas finales...")
+    df_v1 = _add_ids_and_tail_cols(df_v1)
+    df_v2 = _add_ids_and_tail_cols(df_v2)
 
-    # Paso 4: Llave
-    LOGGER.info("Paso 4: Cruce Llave (origenDestino → Swift)...")
-    od_map = _read_od_mapping(config.ORIGEN_DESTINO)
-    df_v1  = _apply_llave_to_sheet(df_v1, od_map)
-    df_v2  = _apply_llave_to_sheet(df_v2, od_map)
+    # ── 8) Separar completos / incompletos ─────────────────
+    df_v1_comp   = df_v1.loc[df_v1["Estado"] == "Completo"].copy()
+    df_v2_comp   = df_v2.loc[df_v2["Estado"] == "Completo"].copy()
+    df_v1_incomp = df_v1.loc[df_v1["Estado"] == "Incompleto"].copy()
+    df_v2_incomp = df_v2.loc[df_v2["Estado"] == "Incompleto"].copy()
 
-    stats["llaves"] = int(
-        df_v1["Llave"].replace("", pd.NA).notna().sum()
-        + df_v2["Llave"].replace("", pd.NA).notna().sum()
-    )
+    total_comp   = len(df_v1_comp) + len(df_v2_comp)
+    total_incomp = len(df_v1_incomp) + len(df_v2_incomp)
+    total_error  = sum(1 for r in results_v1 + results_v2 if r.get("estado") == "Error")
 
-    # Guardar Swift_completos
-    write_sheets(
-        config.SWIFT_COMPLETOS,
-        {config.SHEET_V1: df_v1, config.SHEET_V2: df_v2},
-        context="run_formulario",
-    )
+    LOGGER.info(f"V1 → Completos: {len(df_v1_comp)} | Incompletos: {len(df_v1_incomp)}")
+    LOGGER.info(f"V2 → Completos: {len(df_v2_comp)} | Incompletos: {len(df_v2_incomp)}")
 
-    # Paso 5: Llave Origen Destino
-    LOGGER.info("Paso 5: Actualizando Llave Origen Destino en origenDestino.xlsx...")
-    df_swift_all = pd.concat([df_v1, df_v2], ignore_index=True)
-    _update_od_llave(config.ORIGEN_DESTINO, df_swift_all)
+    # ── 9) Exportar ────────────────────────────────────────
+    LOGGER.info("Paso 6: Exportando Swift_completos y Swift_manuales...")
+    _write_swift_excel(df_v1_comp,   df_v2_comp,   out_completos, label=f"completos_{tipo}")
+    _write_swift_excel(df_v1_incomp, df_v2_incomp, out_manuales,  label=f"manuales_{tipo}")
+
+    stats["completos"]   = total_comp
+    stats["incompletos"] = total_incomp
+    stats["errores"]     = total_error
 
     LOGGER.info(
-        f"=== FIN CRUCE ===  "
-        f"Formularios={stats['formularios']} | Llaves={stats['llaves']}"
+        f"=== FIN PIPELINE ===  "
+        f"Completos:{total_comp} | Incompletos:{total_incomp} | Errores:{total_error}"
     )
     return stats
 
@@ -812,4 +716,7 @@ def run_cruce_completo() -> Dict:
 # MAIN — ejecución standalone
 # =========================================================
 if __name__ == "__main__":
-    run_cruce_completo()
+    from core.cache import PdfCache
+    cache = PdfCache(config.CACHE_FILE)
+    run_pipeline_completo(cache=cache, debug=config.DEBUG)
+    cache.save()
