@@ -1,16 +1,11 @@
-# -*- coding: utf-8 -*-
 """
-core/logger.py — Logging centralizado para todo el proyecto
+Logging centralizado para todo el proyecto
 
 Uso en cualquier script:
     from core.logger import get_logger
     LOGGER = get_logger(__name__)
 
-Características:
-  - Un solo setup compartido (evita handlers duplicados en ejecuciones repetidas)
-  - Salida simultánea a consola y archivo de log con rotación diaria
-  - Archivo de log: BASE_ROOT/logs/pipeline_YYYY-MM-DD.log
-  - Nivel configurable (INFO por defecto, DEBUG si config.DEBUG = True)
+
 """
 
 from __future__ import annotations
@@ -80,9 +75,6 @@ def get_logger(name: str) -> logging.Logger:
     Ejemplo:
         LOGGER = get_logger(__name__)
         LOGGER.info("Iniciando procesamiento...")
-
-    Si el sistema de logging aún no fue inicializado, lo inicializa
-    automáticamente con los valores de config.py.
     """
     if not _CONFIGURED:
         # Inicialización lazy: importa config solo cuando se necesita

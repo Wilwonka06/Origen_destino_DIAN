@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 core/validators.py — Validación de campos y archivos de entrada
 

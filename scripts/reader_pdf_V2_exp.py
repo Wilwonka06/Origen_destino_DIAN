@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 reader_pdf_V2_exp.py — Lector PDF SWIFT Exportaciones V2
 

@@ -1,39 +1,27 @@
-# -*- coding: utf-8 -*-
 """
 run_formulario.py — Cruces de Formulario, Llave y Llave OD
 
 PASO 1) Lee XLSB (hoja COM)
         - Encabezados desde fila 4
-        - Toma A..F (hasta DEBITO)
 
-PASO 2) Filtra:
-        - FECHA >= config.FECHA_MIN_XLSB
-        - INDICA == tipo  ("imp" para IMP, "exp" para EXP)
+PASO 2) Filtra:vFECHA >= config.FECHA_MIN_XLSB. INDICA = depende el tipo
 
 PASO 3) Cruza con Swift_completos:
         - Llave 1: FECHA_COM (normalizada a YYYY-MM-DD) vs Date (Swift)
         - Llave 2: DETALLE_COM (limpia desde #) vs Nombre archivo (Swift)
                  (Nombre archivo: elimina códigos iniciales + elimina .pdf)
-                 Matching robusto por tokens:
-                   * exige coincidencia de primeras 2 palabras (si existen)
-                   * exige ratio de coincidencia >= TOKEN_MIN_RATIO
+                 Matching robusto por tokens. 
         - Trae FORMULARIO -> Formulario (Swift)
-        - Si varios matches, suma DEBITO y si coincide con Amount, concatena formularios con "-"
+        - Si hay varios matches, suma DEBITO y si coincide con Amount, concatena formularios con "-"
 
 PASO 4) Cruce Llave (origenDestino.xlsx):
-        - Llave: "Nombre personalizado" (origenDestino / hoja Datos Origen Destino)
-                 vs "Nombre personalizado" (Swift)
-        - Formas societarias normalizadas a canónico con puntos en ambos lados
-          (SA → S.A., SAS → S.A.S., SAC → S.A.C., BV → B.V., NV → N.V.)
-          para garantizar tokenización simétrica y evitar fallos de match.
+        - Llave: "Nombre personalizado" (origenDestino) vs "Nombre personalizado" (Swift)
         - Trae: "Llave carga masiva" -> "Llave" (Swift)
 
 PASO 5) Cruce final (origenDestino.xlsx / hoja "Origen y destino"):
-        - Desde Swift: columna "Formulario" (ej: "12030-None-12028")
-          * extrae consecutivos numéricos
+        - Desde Swift: columna "Formulario" * extrae consecutivos numéricos
         - Relaciona con origenDestino: columna "Consecutivo"
         - Escribe Swift["Llave"] en origenDestino["Llave Origen Destino"]
-        - Guarda ambos archivos
 """
 
 from __future__ import annotations
@@ -60,6 +48,15 @@ TOKEN_MIN_OVERLAP = config.TOKEN_MIN_OVERLAP
 HEADER_ROW_1BASED = 4
 MAX_COLS          = 6
 
+# ── constantes EXP ─────────────────────────────────────────
+EXP_ALIASES      = getattr(config, "EXP_PROVEEDOR_ALIASES", {
+    "distribuidora": "distritex",
+})
+# Tolerancia de monto para EXP (PDF vs XLSB suelen diferir hasta ~0.05)
+AMOUNT_TOL_EXP   = getattr(config, "AMOUNT_TOL_EXP", 0.10)
+# Ventana de días para fallback de fecha (0 = solo fecha exacta)
+EXP_FECHA_WINDOW = getattr(config, "EXP_FECHA_WINDOW_DAYS", 1)
+
 
 # =========================================================
 # UTILIDADES NORMALIZACIÓN
@@ -76,63 +73,11 @@ def _parse_fecha_excel_series(s: pd.Series) -> pd.Series:
     return pd.to_datetime(s2, dayfirst=True, errors="coerce")
 
 
-# ─── Formas societarias: patrones ordenados de más largo a más corto ──────────
-# Cada tupla: (patrón compilado, reemplazo canónico con puntos)
-# La normalización es simétrica: se aplica tanto al nombre Swift como al de OD,
-# garantizando que "SA", "S A", "S.A" y "S.A." tokenicen igual → "s.a."
-_FORMAS_SOCIETARIAS_PATTERNS = [
-    (re.compile(r'\bS\.A\.S\.(?!\w)',           re.IGNORECASE), 'S.A.S.'),  # ya correcto
-    (re.compile(r'\bS[\s\.]*A[\s\.]*S[\s\.]*(?!\.|[A-Z0-9])', re.IGNORECASE), 'S.A.S.'),
-    (re.compile(r'\bS\.A\.C\.(?!\w)',           re.IGNORECASE), 'S.A.C.'),
-    (re.compile(r'\bS[\s\.]*A[\s\.]*C[\s\.]*(?!\.|[A-Z0-9])', re.IGNORECASE), 'S.A.C.'),
-    (re.compile(r'\bS\.R\.L\.(?!\w)',           re.IGNORECASE), 'S.R.L.'),
-    (re.compile(r'\bS[\s\.]*R[\s\.]*L[\s\.]*(?!\.|[A-Z0-9])', re.IGNORECASE), 'S.R.L.'),
-    (re.compile(r'\bS\.A\.(?!\w)',              re.IGNORECASE), 'S.A.'),    # ya correcto
-    (re.compile(r'\bS[\s\.]*A[\s\.]*(?!\.|\w)', re.IGNORECASE), 'S.A.'),
-    (re.compile(r'\bB\.V\.(?!\w)',              re.IGNORECASE), 'B.V.'),
-    (re.compile(r'\bB[\s\.]*V[\s\.]*(?!\.|[A-Z0-9])', re.IGNORECASE), 'B.V.'),
-    (re.compile(r'\bN\.V\.(?!\w)',              re.IGNORECASE), 'N.V.'),
-    (re.compile(r'\bN[\s\.]*V[\s\.]*(?!\.|[A-Z0-9])', re.IGNORECASE), 'N.V.'),
-]
-# Inserta espacio si punto final de forma societaria queda pegado a un BIC
-_RE_FORMA_BIC_PEGADO = re.compile(r'(\.)([A-Z]{4}[A-Z0-9]{2}[A-Z0-9]{2})')
-
-
-def _corregir_forma_societaria(nombre: str) -> str:
-    """
-    Normaliza formas societarias al formato canónico con puntos.
-    Aplica a los dos lados del cruce de llave (Swift y origenDestino) para
-    garantizar tokens simétricos durante el matching.
-
-    Ejemplos:
-      "NOVOMODE SA"    → "NOVOMODE S.A."
-      "COMODIN S A S"  → "COMODIN S.A.S."
-      "KROKOM SAC"     → "KROKOM S.A.C."
-      "BALNOR BV"      → "BALNOR B.V."
-      "NOVOMODE S A CITIUS33XXX" → "NOVOMODE S.A. CITIUS33XXX"
-    No modifica formas ya correctas (e.g., "PIAMONTE S.A.").
-    """
-    if not nombre:
-        return nombre
-    resultado = nombre
-    for patron, reemplazo in _FORMAS_SOCIETARIAS_PATTERNS:
-        resultado = patron.sub(reemplazo, resultado)
-    resultado = _RE_FORMA_BIC_PEGADO.sub(r'\1 \2', resultado)
-    return re.sub(r'  +', ' ', resultado).strip()
-
-
 def _normalize_text_key(x) -> str:
-    """
-    Normaliza texto para comparaciones de llave:
-      1. Elimina espacios no separables y blancos extremos
-      2. Normaliza formas societarias al formato canónico con puntos
-         (e.g., SA → S.A., S A S → S.A.S.) para tokenización simétrica
-      3. Colapsa espacios múltiples y aplica casefold
-    """
+    """Normaliza texto: lowercase, sin espacios extra, sin nbsp."""
     if x is None:
         return ""
     s = str(x).replace("\u00A0", " ").strip()
-    s = _corregir_forma_societaria(s)
     s = re.sub(r"\s+", " ", s)
     return s.casefold()
 
@@ -220,10 +165,76 @@ def _tokens_match(swift_clean: str, detalle_clean: str) -> bool:
     return st[0] in dt
 
 
+def _tokens_match_exp(proveedor_norm: str, detalle_clean: str) -> bool:
+    """
+    Match Proveedor Swift EXP vs DETALLE COM.
+
+    Más permisivo que IMP porque el banco escribe alias internos
+    (ej: "DISTRIBUIDORA TEXTIL..." → "Distritex ...").
+
+    Reglas:
+      1. El primer token del proveedor (o su alias en EXP_ALIASES) debe
+         estar en los tokens del DETALLE.
+      2. Overlap total >= 1, contando el alias como coincidencia válida.
+
+    El monto (CREDITO) desambigua cuando hay varios candidatos por texto.
+    """
+    prov_tokens = _tokenize(proveedor_norm)
+    det_tokens  = set(_tokenize(detalle_clean))
+
+    if not prov_tokens or not det_tokens:
+        return False
+
+    first        = prov_tokens[0]
+    first_alias  = EXP_ALIASES.get(first, first)
+    first_in_det = first in det_tokens
+    alias_in_det = first_alias in det_tokens
+
+    first_ok = first_in_det or alias_in_det
+    if not first_ok:
+        # Prefijo de 6 chars: "distri" cubre "distritex", "manufactur" cubre "manufacturas"
+        first_ok = any(
+            t.startswith(first_alias[:6]) or first_alias.startswith(t[:6])
+            for t in det_tokens if len(t) >= 4
+        )
+    if not first_ok:
+        return False
+
+    # Overlap directo + el alias cuenta como match si el token original no está
+    overlap = sum(1 for t in prov_tokens if t in det_tokens)
+    if alias_in_det and not first_in_det:
+        overlap += 1
+
+    return overlap >= 1
+
+
+def _build_swift_keys_exp(df_swift: pd.DataFrame) -> pd.DataFrame:
+    """
+    Prepara Swift EXP para el cruce.
+    Usa 'Proveedor' en lugar de 'Nombre archivo' porque los PDFs EXP
+    se nombran solo con la fecha (ej: '19042025.pdf').
+
+      fecha_key      → YYYY-MM-DD
+      proveedor_norm → Proveedor normalizado (formas societarias corregidas)
+      amount_num     → Amount como float
+    """
+    out  = df_swift.copy()
+    miss = [c for c in ("Date", "Proveedor", "Amount", "id") if c not in out.columns]
+    if miss:
+        raise KeyError(f"Swift EXP falta(n) columna(s) {miss}. Detectadas: {list(out.columns)}")
+
+    out["_date_dt"]       = pd.to_datetime(out["Date"], errors="coerce")
+    out["fecha_key"]      = out["_date_dt"].dt.strftime("%Y-%m-%d")
+    out["proveedor_norm"] = out["Proveedor"].apply(_normalize_text_key)
+    out["amount_num"]     = out["Amount"].apply(_parse_money_to_float)
+    out = out.drop(columns=["_date_dt"], errors="ignore")
+    return out
 # =========================================================
-# PASO 1) LECTURA XLSB COM (A..F, header fila 4)
-# =========================================================
-def read_com_sheet(xlsb_path: Path, sheet_name: str = config.SHEET_COM) -> pd.DataFrame:
+def read_com_sheet(
+    xlsb_path: Path,
+    sheet_name: str = config.SHEET_COM,
+    max_cols: int = MAX_COLS,
+) -> pd.DataFrame:
     if not xlsb_path.exists():
         raise FileNotFoundError(f"No existe el archivo: {xlsb_path}")
 
@@ -236,7 +247,7 @@ def read_com_sheet(xlsb_path: Path, sheet_name: str = config.SHEET_COM) -> pd.Da
             for r_idx, row in enumerate(sheet.rows()):
                 if r_idx < header_idx:
                     continue
-                values = [cell.v for cell in row[:MAX_COLS]]
+                values = [cell.v for cell in row[:max_cols]]
                 if r_idx == header_idx:
                     headers = [str(v).strip() if v is not None else "" for v in values]
                     continue
@@ -300,17 +311,20 @@ def filter_com_df(df: pd.DataFrame, tipo: str = "imp") -> pd.DataFrame:
 # =========================================================
 # PASO 3) CRUCE CON SWIFT_COMPLETOS → FORMULARIO
 # =========================================================
-def _build_com_keys(df_com: pd.DataFrame) -> pd.DataFrame:
+def _build_com_keys(df_com: pd.DataFrame, monto_col: str = "DEBITO") -> pd.DataFrame:
     """
-    Prepara COM con columnas para el cruce:
+    Prepara COM con columnas para el cruce.
+      monto_col = "DEBITO" (IMP) | "CREDITO" (EXP)
+
       fecha_key      → YYYY-MM-DD
       detalle_clean  → DETALLE antes del '#', normalizado
-      debito_num     → DEBITO como float
-      formulario_str → FORMULARIO como string (tal cual, sin lstrip)
+      monto_num      → monto_col como float
+      debito_num     → alias de monto_num (retrocompatibilidad IMP)
+      formulario_str → FORMULARIO como string
       row_order      → orden original
     """
     cols_map = {str(c).strip().upper(): c for c in df_com.columns}
-    required = ["FECHA", "DETALLE", "FORMULARIO", "DEBITO"]
+    required = ["FECHA", "DETALLE", "FORMULARIO", monto_col.upper()]
     missing  = [c for c in required if c not in cols_map]
     if missing:
         raise KeyError(f"En COM faltan columnas: {missing}. Detectadas: {list(df_com.columns)}")
@@ -319,7 +333,8 @@ def _build_com_keys(df_com: pd.DataFrame) -> pd.DataFrame:
     out["_fecha_dt"]      = _parse_fecha_excel_series(out[cols_map["FECHA"]])
     out["fecha_key"]      = out["_fecha_dt"].dt.strftime("%Y-%m-%d")
     out["detalle_clean"]  = out[cols_map["DETALLE"]].apply(_clean_detalle)
-    out["debito_num"]     = out[cols_map["DEBITO"]].apply(_parse_money_to_float)
+    out["monto_num"]      = out[cols_map[monto_col.upper()]].apply(_parse_money_to_float)
+    out["debito_num"]     = out["monto_num"]   # alias retrocompatible
     out["formulario_str"] = out[cols_map["FORMULARIO"]].apply(
         lambda x: ""
         if x is None or (isinstance(x, float) and pd.isna(x))
@@ -435,6 +450,139 @@ def _update_formulario_for_sheet(
     LOGGER.info(
         f"Swift actualizado Formulario: updated={updated} | "
         f"multi_matched={multi_matched} | multi_ok={multi_ok} | multi_fail={multi_fail}"
+    )
+    return out
+
+
+def _update_formulario_exp_for_sheet(df_swift_sheet: pd.DataFrame, df_com: pd.DataFrame,) -> pd.DataFrame:
+    """
+    Cruza COM → Swift para poblar 'Formulario'. — MODO EXP
+
+    Pasos por cada fila Swift:
+      a. Candidatos COM con fecha exacta + match _tokens_match_exp
+      b. Si fecha exacta vacía → ventana ±1 día
+      c. Filtrar por |CREDITO - Amount| <= AMOUNT_TOL_EXP  → 1 exacto → asignar
+      d. Sin monto exacto → verificar suma de créditos
+    """
+    if df_swift_sheet.empty:
+        return df_swift_sheet
+
+    out = df_swift_sheet.copy()
+    out.columns = [str(c).strip() for c in out.columns]
+
+    if "Formulario" not in out.columns:
+        out["Formulario"] = ""
+
+    com_k   = _build_com_keys(df_com, monto_col="CREDITO")
+    swift_k = _build_swift_keys_exp(out)
+
+    # Índice COM por fecha
+    com_by_date: Dict[str, pd.DataFrame] = {
+        k: v.copy() for k, v in com_k.groupby("fecha_key")
+    }
+
+    def _cands_ventana(fecha_str: str) -> pd.DataFrame:
+        try:
+            base = pd.Timestamp(fecha_str)
+        except Exception:
+            return pd.DataFrame()
+        frames = []
+        for delta in range(-EXP_FECHA_WINDOW, EXP_FECHA_WINDOW + 1):
+            f = (base + pd.Timedelta(days=delta)).strftime("%Y-%m-%d")
+            day = com_by_date.get(f)
+            if day is not None and not day.empty:
+                frames.append(day)
+        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+    updated   = 0
+    sin_fecha = 0
+    sin_texto = 0
+    sin_monto = 0
+    multi_ok  = 0
+
+    for idx, srow in swift_k.iterrows():
+        sid      = srow["id"]
+        s_fecha  = srow["fecha_key"]
+        s_prov   = srow["proveedor_norm"]
+        s_amount = srow["amount_num"]
+
+        if not isinstance(s_fecha, str) or not s_fecha:
+            continue
+
+        # a. Fecha exacta → b. fallback ventana
+        com_day = com_by_date.get(s_fecha, pd.DataFrame())
+        if com_day.empty:
+            com_day = _cands_ventana(s_fecha)
+            if com_day.empty:
+                sin_fecha += 1
+                LOGGER.debug(f"[EXP] Sin fecha: id={sid} fecha={s_fecha} prov='{s_prov}'")
+                continue
+
+        # c. Filtrar por texto (Proveedor vs DETALLE)
+        cand_texto = com_day.loc[
+            com_day["detalle_clean"].apply(lambda d: _tokens_match_exp(s_prov, d))
+        ].copy()
+
+        if cand_texto.empty:
+            sin_texto += 1
+            LOGGER.debug(
+                f"[EXP] Sin texto: id={sid} prov='{s_prov}' "
+                f"| detalles={com_day['detalle_clean'].tolist()[:5]}"
+            )
+            continue
+
+        # d. Filtrar por monto exacto
+        if pd.notna(s_amount):
+            cand_monto = cand_texto.loc[
+                cand_texto["monto_num"].apply(
+                    lambda m: pd.notna(m) and abs(m - s_amount) <= AMOUNT_TOL_EXP
+                )
+            ].copy()
+        else:
+            cand_monto = pd.DataFrame()
+
+        if len(cand_monto) == 1:
+            form_val = str(cand_monto.iloc[0]["formulario_str"]).strip()
+            if form_val and form_val.lower() not in ("none", "nan"):
+                out.at[idx, "Formulario"] = form_val
+                updated += 1
+            continue
+
+        if len(cand_monto) > 1:
+            cand_monto = cand_monto.sort_values("row_order")
+            forms = [
+                str(x).strip() for x in cand_monto["formulario_str"].tolist()
+                if str(x).strip() not in ("", "none", "nan", "nat")
+            ]
+            if forms:
+                out.at[idx, "Formulario"] = "-".join(forms)
+                updated += 1
+                multi_ok += 1
+            continue
+
+        # e. Sin monto exacto → verificar suma (un Swift puede cubrir N registros COM)
+        total = cand_texto["monto_num"].sum(skipna=True)
+        if pd.notna(total) and pd.notna(s_amount) and abs(total - s_amount) <= AMOUNT_TOL_EXP:
+            cand_texto = cand_texto.sort_values("row_order")
+            forms = [
+                str(x).strip() for x in cand_texto["formulario_str"].tolist()
+                if str(x).strip() not in ("", "none", "nan", "nat")
+            ]
+            if forms:
+                out.at[idx, "Formulario"] = "-".join(forms)
+                updated += 1
+                multi_ok += 1
+        else:
+            sin_monto += 1
+            LOGGER.debug(
+                f"[EXP] Sin monto: id={sid} prov='{s_prov}' amount={s_amount} "
+                f"| candidatos monto={cand_texto[['formulario_str','monto_num']].to_dict('records')}"
+            )
+
+    LOGGER.info(
+        f"[EXP] Swift actualizado Formulario: updated={updated} | "
+        f"sin_fecha={sin_fecha} | sin_texto={sin_texto} | "
+        f"sin_monto={sin_monto} | multi_ok={multi_ok}"
     )
     return out
 
@@ -598,27 +746,6 @@ def _extract_consecutivos_from_formulario(val) -> List[str]:
             norm = m.group(0).lstrip("0") or "0"
             out.append(norm)
     return out
-
-
-def _normalize_consecutivo_series(s: pd.Series) -> pd.Series:
-    """Normaliza Consecutivo a string de dígitos sin ceros iniciales (12029.0 → '12029')."""
-    def _one(x):
-        if x is None or (isinstance(x, float) and pd.isna(x)):
-            return ""
-        if isinstance(x, int) and not isinstance(x, bool):
-            return str(x).lstrip("0") or "0"
-        if isinstance(x, float):
-            if pd.isna(x):
-                return ""
-            if float(x).is_integer():
-                return str(int(x)).lstrip("0") or "0"
-            return str(x).strip()
-        sx = str(x).strip()
-        sx = re.sub(r"\.0+$", "", sx)
-        m  = re.search(r"\d+", sx)
-        return (m.group(0).lstrip("0") or "0") if m else ""
-    return s.apply(_one)
-
 
 def _update_od_llave(path: Path, df_swift_all: pd.DataFrame) -> None:
     """
@@ -793,15 +920,17 @@ def run_cruce_completo(tipo: str = "imp") -> Dict:
     stats = {"formularios": 0, "llaves": 0}
 
     # Paso 1 + 2: Leer y filtrar COM por tipo (INDICA=Imp o Exp)
-    df_com          = read_com_sheet(config.XLSB_CUENTA_COM, config.SHEET_COM)
+    com_max_cols = 7 if tipo == "exp" else MAX_COLS
+    df_com          = read_com_sheet(config.XLSB_CUENTA_COM, config.SHEET_COM, max_cols=com_max_cols)
     df_com_filtrado = filter_com_df(df_com, tipo=tipo)
 
     if df_com_filtrado.empty:
         LOGGER.warning(f"COM filtrada vacía para {tipo_label}. No se puede ejecutar cruce.")
         return stats
 
-    # Preparar COM keys una sola vez
-    com_keys = _build_com_keys(df_com_filtrado)
+    # IMP usa DEBITO (el pago sale); EXP usa CREDITO (el cobro entra)
+    monto_col = "DEBITO" if tipo == "imp" else "CREDITO"
+    com_keys  = _build_com_keys(df_com_filtrado, monto_col=monto_col)
 
     # Leer Swift_completos
     df_v1 = read_sheet_safe(swift_completos, config.SHEET_V1, context=f"cruces_{tipo}")
@@ -815,8 +944,12 @@ def run_cruce_completo(tipo: str = "imp") -> Dict:
 
     # Paso 3: Formulario
     LOGGER.info(f"Paso 3: Cruce Formulario (COM → Swift) [{tipo_label}]...")
-    df_v1 = _update_formulario_for_sheet(df_v1, com_keys)
-    df_v2 = _update_formulario_for_sheet(df_v2, com_keys)
+    if tipo == "imp":
+        df_v1 = _update_formulario_for_sheet(df_v1, com_keys)
+        df_v2 = _update_formulario_for_sheet(df_v2, com_keys)
+    else:
+        df_v1 = _update_formulario_exp_for_sheet(df_v1, df_com_filtrado)
+        df_v2 = _update_formulario_exp_for_sheet(df_v2, df_com_filtrado)
 
     stats["formularios"] = int(
         df_v1["Formulario"].replace("", pd.NA).notna().sum()

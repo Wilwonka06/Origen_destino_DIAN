@@ -1,10 +1,7 @@
-# -*- coding: utf-8 -*-
 """
 config.py — Configuración centralizada del proyecto Origen_Destino_DIAN
 
-Soporta dos tipos de operación:
-  - "imp"  Importaciones (COMODIN/CONTROL DE PAGOS)
-  - "exp"  Exportaciones (EXPORTACIONES/SWIFT 2019-2026/COMODIN)
+Soporta todos los tipos de operación
 """
 
 from __future__ import annotations
@@ -166,12 +163,11 @@ OD2_COL_LLAVE_OD    = "Llave Origen Destino"
 OCR_LANG   = "eng"
 OCR_CONFIG = r"--oem 3 --psm 6"
 OCR_DPI    = 300
-OCR_MIN_NATIVE_CHARS: int = 99999   # fuerza siempre OCR
+OCR_MIN_NATIVE_CHARS: int = 99999  
 
 # =========================================================
 # PARÁMETROS DE MATCHING Y VALIDACIÓN
 # =========================================================
-FUZZY_THRESHOLD   = 85
 TOKEN_MIN_RATIO   = 0.60
 TOKEN_MIN_OVERLAP = 2
 

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 reader_pdf_V2.py — Extracción OCR de PDFs SWIFT estructura V2
 

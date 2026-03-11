@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 copiar_pdfs.py — Copia PDFs desde la red a carpetas locales V1 / V2
 

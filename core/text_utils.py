@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 core/text_utils.py — Utilidades de texto compartidas
 
@@ -317,8 +316,6 @@ class ProveedorMatcher:
 class TokenMatcher:
     """
     Matching por tokens para el cruce de formularios (COM → Swift).
-
-    Extraído de run_formulario.py para ser reutilizable y testeable.
 
     Lógica:
       - Exige coincidencia de las primeras N palabras

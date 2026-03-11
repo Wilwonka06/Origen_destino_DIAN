@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 run_pipeline.py — Pipeline principal de extracción y enriquecimiento
 

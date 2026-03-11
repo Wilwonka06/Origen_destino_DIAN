@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 post_validacion_swift.py — Post validación y traslado de manuales corregidos
 

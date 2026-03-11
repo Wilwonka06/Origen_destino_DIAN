@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 core/excel_utils.py — Utilidades Excel centralizadas
 

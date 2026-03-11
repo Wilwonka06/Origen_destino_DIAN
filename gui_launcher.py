@@ -1,11 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-gui_launcher.py — Interfaz gráfica Pipeline Origen Destino DIAN
-
-Diseño minimalista y moderno con soporte completo de scroll.
-Soporta pantalla completa, redimensionamiento y límites de resolución.
-"""
-
 from __future__ import annotations
 
 import os
@@ -17,16 +9,16 @@ from tkinter import ttk
 # =========================================================
 # PALETA DE COLORES Y ESTILOS MODERNOS
 # =========================================================
-C_BG          = "#F8FAFC"  # Fondo principal más suave (Slate 50)
+C_BG          = "#F8FAFC"
 C_WHITE       = "#FFFFFF"
-C_BLUE        = "#2563EB"  # Azul primario vibrante
+C_BLUE        = "#2563EB"
 C_BLUE_HOVER  = "#1D4ED8"
 C_BLUE_LIGHT  = "#EFF6FF"
 C_IMP         = "#2563EB"
-C_EXP         = "#059669"  # Verde esmeralda
+C_EXP         = "#059669"
 C_EXP_LIGHT   = "#ECFDF5"
-C_TEXT        = "#0F172A"  # Texto oscuro (Slate 900)
-C_SUBTEXT     = "#64748B"  # Texto secundario (Slate 500)
+C_TEXT        = "#0F172A"
+C_SUBTEXT     = "#64748B"
 C_OK          = "#10B981"
 C_ERROR       = "#EF4444"
 C_DISABLED    = "#E2E8F0"

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 core/ocr_engine.py — Motor OCR centralizado para el proyecto
 
