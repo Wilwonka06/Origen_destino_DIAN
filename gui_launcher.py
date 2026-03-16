@@ -15,8 +15,10 @@ C_SURFACE      = "#F0F2F5"      # Fondo frames / cards
 C_BORDER       = "#E4E6EB"      # Bordes sutiles
 C_PRIMARY_IMP  = "#08129B"      # Azul importaciones
 C_PRIMARY_EXP  = "#059669"      # Verde exportaciones
+C_PRIMARY_GTO  = "#B45309"      # Naranja gastos
 C_PRIMARY_HVR  = "#060D6F"      # Hover azul
 C_EXP_HVR      = "#047857"      # Hover verde
+C_GTO_HVR      = "#92400E"      # Hover naranja
 C_TEXT         = "#1C1E21"      # Texto principal
 C_SUBTEXT      = "#65676B"      # Texto secundario
 C_OK           = "#388E3C"      # Verde éxito
@@ -36,8 +38,8 @@ FONT_MONO   = ("Consolas", 11)
 # DATOS DE MODOS
 # =========================================================
 MODOS = [
-    ("ocr",       "📄", "1. Extracción OCR",
-     "Lee los PDFs SWIFT y extrae\nlos campos en Swift Completos."),
+    ("ocr",       "📄", "1. Extracción / Lectura",
+     "Lee los PDFs SWIFT o correos GTO\ny extrae los campos en Swift Completos."),
     ("post_auto", "📋", "2. Traslado Automático",
      "Mueve los registros corregidos\nmanualmente a Swift Completos."),
     ("plantilla", "📊", "3. Generar Plantilla",
@@ -157,6 +159,8 @@ class OptionCard(ctk.CTkFrame):
     def _accent(self):
         if self._tipo_var and self._tipo_var.get() == "exp":
             return ("#ECFDF5", C_PRIMARY_EXP)
+        if self._tipo_var and self._tipo_var.get() == "gto":
+            return ("#FEF3C7", C_PRIMARY_GTO)
         return ("#EEF0FB", C_PRIMARY_IMP)
 
     def _draw_radio(self, selected, color=C_PRIMARY_IMP):
@@ -201,8 +205,16 @@ class OptionCard(ctk.CTkFrame):
 
         # Actualizar color del checkbox si corresponde
         if self._chk_forzar:
-            accent_color = C_PRIMARY_EXP if (self._tipo_var and self._tipo_var.get() == "exp") else C_PRIMARY_IMP
-            hover_color  = C_EXP_HVR if accent_color == C_PRIMARY_EXP else C_PRIMARY_HVR
+            tipo_sel = self._tipo_var.get() if self._tipo_var else "imp"
+            if tipo_sel == "exp":
+                accent_color = C_PRIMARY_EXP
+                hover_color  = C_EXP_HVR
+            elif tipo_sel == "gto":
+                accent_color = C_PRIMARY_GTO
+                hover_color  = C_GTO_HVR
+            else:
+                accent_color = C_PRIMARY_IMP
+                hover_color  = C_PRIMARY_HVR
             self._chk_forzar.configure(fg_color=accent_color, hover_color=hover_color)
 
 
@@ -283,6 +295,7 @@ class PipelineGUI(ctk.CTk):
 
         self._btn_imp = self._tipo_button(tipo_row, "📥  Importaciones", "imp")
         self._btn_exp = self._tipo_button(tipo_row, "📤  Exportaciones", "exp")
+        self._btn_gto = self._tipo_button(tipo_row, "💸  Gastos",        "gto")
         self._tipo.trace_add("write", self._refresh_tipo)
         self._refresh_tipo()
 
@@ -364,9 +377,14 @@ class PipelineGUI(ctk.CTk):
 
     def _refresh_tipo(self, *_):
         sel = self._tipo.get()
-        for btn, val in [(self._btn_imp, "imp"), (self._btn_exp, "exp")]:
+        color_map = {"imp": C_PRIMARY_IMP, "exp": C_PRIMARY_EXP, "gto": C_PRIMARY_GTO}
+        for btn, val in [
+            (self._btn_imp, "imp"),
+            (self._btn_exp, "exp"),
+            (self._btn_gto, "gto"),
+        ]:
             if sel == val:
-                color = C_PRIMARY_IMP if val == "imp" else C_PRIMARY_EXP
+                color = color_map[val]
                 btn.configure(fg_color=color, text_color=C_BG, hover_color=color)
             else:
                 btn.configure(fg_color=C_SURFACE, text_color=C_SUBTEXT, hover_color=C_BORDER)
@@ -374,8 +392,11 @@ class PipelineGUI(ctk.CTk):
     def _refresh_btn_color(self, *_):
         if self._running:
             return
-        if self._tipo.get() == "exp":
+        tipo_sel = self._tipo.get()
+        if tipo_sel == "exp":
             self.btn_run.configure(fg_color=C_PRIMARY_EXP, hover_color=C_EXP_HVR)
+        elif tipo_sel == "gto":
+            self.btn_run.configure(fg_color=C_PRIMARY_GTO, hover_color=C_GTO_HVR)
         else:
             self.btn_run.configure(fg_color=C_PRIMARY_IMP, hover_color=C_PRIMARY_HVR)
 
@@ -450,7 +471,13 @@ class PipelineGUI(ctk.CTk):
             self._metrics_frame.pack_forget()
 
             if progress:
-                bar_color = C_PRIMARY_EXP if self._tipo.get() == "exp" else C_PRIMARY_IMP
+                tipo_sel = self._tipo.get()
+                if tipo_sel == "exp":
+                    bar_color = C_PRIMARY_EXP
+                elif tipo_sel == "gto":
+                    bar_color = C_PRIMARY_GTO
+                else:
+                    bar_color = C_PRIMARY_IMP
                 self._progress.configure(progress_color=bar_color)
                 self._progress.pack(fill="x", pady=(16, 0))
                 self._progress.configure(mode="indeterminate")
@@ -566,11 +593,19 @@ class PipelineGUI(ctk.CTk):
                 text_color=C_SUBTEXT,
             )
         else:
-            color = C_PRIMARY_EXP if self._tipo.get() == "exp" else C_PRIMARY_IMP
-            hover = C_EXP_HVR    if self._tipo.get() == "exp" else C_PRIMARY_HVR
+            tipo_sel = self._tipo.get()
+            if tipo_sel == "exp":
+                color = C_PRIMARY_EXP
+                hover = C_EXP_HVR
+            elif tipo_sel == "gto":
+                color = C_PRIMARY_GTO
+                hover = C_GTO_HVR
+            else:
+                color = C_PRIMARY_IMP
+                hover = C_PRIMARY_HVR
             self.btn_run.configure(
                 state="normal",
-                text="Iniciar procesamiento  🚀",
+                text="Iniciar procesamiento",
                 fg_color=color,
                 hover_color=hover,
                 text_color=C_BG,

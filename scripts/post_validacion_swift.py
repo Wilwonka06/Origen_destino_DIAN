@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 post_validacion_swift.py — Post validación y traslado de manuales corregidos
 
@@ -19,7 +20,7 @@ from openpyxl import load_workbook
 import config
 from core.logger import get_logger
 from core.excel_utils import read_sheet_safe, write_sheets, ensure_columns
-from core.text_utils import build_nombre_personalizado, corregir_forma_societaria
+from core.text_utils import build_nombre_personalizado
 from core.validators import validate_input_files
 
 LOGGER = get_logger(__name__)
@@ -89,20 +90,30 @@ def _recortar_nombre_personalizado(valor, limite: int = NOMBRE_PERSONALIZADO_LIM
 def _paths(tipo: str) -> dict:
     """
     Retorna las rutas correctas según el tipo de operación.
-    tipo: "imp" | "exp"
+    tipo: "imp" | "exp" | "gto"
     """
     if tipo == "exp":
         return {
-            "manuales":  config.SWIFT_MANUALES_EXP,
-            "completos": config.SWIFT_COMPLETOS_EXP,
-            "acumulado": config.ACUMULADO_SWIFT_EXP,
-            "plantilla": config.PLANTILLA_EXP,
+            "manuales":     config.SWIFT_MANUALES_EXP,
+            "completos":    config.SWIFT_COMPLETOS_EXP,
+            "acumulado":    config.ACUMULADO_SWIFT_EXP,
+            "plantilla_v1": config.PLANTILLA_V1_EXP,
+            "plantilla_v2": config.PLANTILLA_V2_EXP,
+        }
+    if tipo == "gto":
+        return {
+            "manuales":     config.SWIFT_MANUALES_GTO,
+            "completos":    config.SWIFT_COMPLETOS_GTO,
+            "acumulado":    config.ACUMULADO_SWIFT_GTO,
+            "plantilla_v1": config.PLANTILLA_V1_GTO,
+            "plantilla_v2": config.PLANTILLA_V2_GTO,
         }
     return {
-        "manuales":  config.SWIFT_MANUALES_IMP,
-        "completos": config.SWIFT_COMPLETOS_IMP,
-        "acumulado": config.ACUMULADO_SWIFT,
-        "plantilla": config.PLANTILLA_IMP,
+        "manuales":     config.SWIFT_MANUALES_IMP,
+        "completos":    config.SWIFT_COMPLETOS_IMP,
+        "acumulado":    config.ACUMULADO_SWIFT,
+        "plantilla_v1": config.PLANTILLA_V1_IMP,
+        "plantilla_v2": config.PLANTILLA_V2_IMP,
     }
 
 
@@ -252,23 +263,11 @@ def _preparar_df_para_plantilla(df: pd.DataFrame) -> pd.DataFrame:
     if "Estado" in out.columns:
         out = out.loc[out["Estado"] == "Completo"].copy()
 
-    # Corregir formas societarias en Proveedor y Nombre personalizado
-    # (función importada desde core.text_utils — misma implementación que en run_formulario)
-    for col in ("Proveedor", "Nombre personalizado"):
-        if col in out.columns:
-            out[col] = out[col].apply(
-                lambda v: corregir_forma_societaria(str(v)) if pd.notna(v) and str(v).strip() else v
-            )
-
-    # Deduplicar por "Nombre personalizado" — Bancolombia rechaza duplicados
     antes = len(out)
-    if "Nombre personalizado" in out.columns:
-        out = out.drop_duplicates(subset=["Nombre personalizado"]).reset_index(drop=True)
-    else:
-        out = out.drop_duplicates().reset_index(drop=True)
+    out = out.drop_duplicates()
     duplicados = antes - len(out)
     if duplicados:
-        LOGGER.info(f"Plantilla: {duplicados} registros duplicados eliminados.")
+        LOGGER.info(f"Plantilla: {duplicados} filas duplicadas eliminadas.")
 
     if "Nombre personalizado" in out.columns:
         originales = out["Nombre personalizado"].copy()
@@ -299,8 +298,14 @@ def _crear_plantilla_desde_base(template_path: Path) -> None:
     # Asegurar que la carpeta plantillas existe
     template_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Usar la plantilla IMP como base para cualquier tipo
-    base_imp = config.PLANTILLA_IMP
+    # Determinar plantilla IMP base (misma versión V1 o V2)
+    name = template_path.name.lower()
+    if "v1" in name:
+        base_imp = config.PLANTILLA_V1_IMP
+    elif "v2" in name:
+        base_imp = config.PLANTILLA_V2_IMP
+    else:
+        base_imp = config.PLANTILLA_V1_IMP
 
     if base_imp.exists():
         # ── Opción 1: copiar IMP y limpiar datos ──
@@ -476,65 +481,39 @@ def _write_bancolombia_template(df_source: pd.DataFrame, template_path: Path) ->
     )
 
 
-def _paso_3_plantillas(df_v1: pd.DataFrame, df_v2: pd.DataFrame, tipo: str = "imp") -> int:
-    """
-    Concatena V1 + V2 y genera una sola plantilla Bancolombia por tipo.
-    Retorna el total de registros escritos.
-    """
+def _paso_3_plantillas(df_v1: pd.DataFrame, df_v2: pd.DataFrame, tipo: str = "imp") -> None:
     p = _paths(tipo)
-    # Unir ambas versiones — el origen del PDF (V1 o V2) es irrelevante
-    # para Bancolombia, solo importa el contenido
-    df_todos = pd.concat([df_v1, df_v2], ignore_index=True)
-    _write_bancolombia_template(df_todos, p["plantilla"])
-    return len(_preparar_df_para_plantilla(df_todos))
+    _write_bancolombia_template(df_v1, p["plantilla_v1"])
+    _write_bancolombia_template(df_v2, p["plantilla_v2"])
 
 
 # =========================================================
 # FUNCIÓN PRINCIPAL — llamada desde main.py
 # =========================================================
 def run_post_validacion(tipo: str = "imp") -> dict:
-    """
-    Paso 1: manuales → completos
-    Paso 2: completos → acumulado
-    NO genera plantilla (eso es run_generar_plantilla).
-    """
     LOGGER.info(f"=== INICIO POST VALIDACIÓN [{tipo.upper()}] ===")
 
-    df_comp_v1, df_comp_v2, total_movidos = _paso_1_mover_manuales(tipo)
+    p = _paths(tipo)
+    total_movidos = 0
 
-    if not df_comp_v1.empty or not df_comp_v2.empty:
-        _paso_2_acumulado(df_comp_v1, df_comp_v2, tipo)
+    # Paso 1: mover manuales → completos (solo si existen manuales)
+    if p["manuales"].exists():
+        df_comp_v1, df_comp_v2, total_movidos = _paso_1_mover_manuales(tipo)
+        if not df_comp_v1.empty or not df_comp_v2.empty:
+            _paso_2_acumulado(df_comp_v1, df_comp_v2, tipo)
+        else:
+            LOGGER.info("PASO 2: Swift_completos vacío, se omite acumulado.")
     else:
-        LOGGER.info("PASO 2: Swift_completos vacío, se omite acumulado.")
+        LOGGER.info(f"PASO 1: Swift_manuales_{tipo} no existe — se omite traslado.")
+
+    # Paso 3: siempre generar plantilla desde Swift_completos
+    df_plant_v1 = read_sheet_safe(p["completos"], config.SHEET_V1, context="plantilla")
+    df_plant_v2 = read_sheet_safe(p["completos"], config.SHEET_V2, context="plantilla")
+
+    try:
+        _paso_3_plantillas(df_plant_v1, df_plant_v2, tipo)
+    except FileNotFoundError as e:
+        LOGGER.warning(f"PASO 3 omitido: {e}")
 
     LOGGER.info(f"=== FIN POST VALIDACIÓN [{tipo.upper()}] ===  Movidos={total_movidos}")
     return {"movidos": total_movidos}
-
-
-def run_generar_plantilla(tipo: str = "imp") -> dict:
-    """
-    Paso 3: Lee Swift_completos (V1 + V2) y genera UNA SOLA plantilla
-    Bancolombia por tipo:
-      - IMP → Plantilla_imp.xlsx
-      - EXP → Plantilla_exp.xlsx
-    Independiente del paso de manuales — se puede ejecutar en cualquier momento.
-    """
-    LOGGER.info(f"=== INICIO GENERAR PLANTILLA [{tipo.upper()}] ===")
-
-    p = _paths(tipo)
-
-    if not p["completos"].exists():
-        raise FileNotFoundError(
-            f"No existe Swift_completos. Ejecuta primero la extracción OCR."
-        )
-
-    df_v1 = read_sheet_safe(p["completos"], config.SHEET_V1, context="plantilla")
-    df_v2 = read_sheet_safe(p["completos"], config.SHEET_V2, context="plantilla")
-
-    total = _paso_3_plantillas(df_v1, df_v2, tipo)
-
-    LOGGER.info(
-        f"=== FIN GENERAR PLANTILLA [{tipo.upper()}] === "
-        f"Archivo: {p['plantilla'].name} | Registros={total}"
-    )
-    return {"registros": total, "archivo": str(p["plantilla"])}

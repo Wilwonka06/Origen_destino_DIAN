@@ -1,7 +1,10 @@
+# -*- coding: utf-8 -*-
 """
 config.py — Configuración centralizada del proyecto Origen_Destino_DIAN
 
-Soporta todos los tipos de operación
+Soporta dos tipos de operación:
+  - "imp"  Importaciones (COMODIN/CONTROL DE PAGOS)
+  - "exp"  Exportaciones (EXPORTACIONES/SWIFT 2019-2026/COMODIN)
 """
 
 from __future__ import annotations
@@ -61,8 +64,9 @@ SWIFT_COMPLETOS_IMP: Path = DIR_RESULTADOS / "Swift_completos.xlsx"
 SWIFT_MANUALES_IMP:  Path = DIR_RESULTADOS / "Swift_manuales.xlsx"
 CACHE_FILE_IMP:      Path = DIR_RESULTADOS / ".procesados_cache.json"
 
-# Plantilla Bancolombia IMP (V1 + V2 unificados)
-PLANTILLA_IMP: Path = DIR_PLANTILLAS / "Plantilla_imp.xlsx"
+# Plantillas Bancolombia IMP
+PLANTILLA_V1_IMP: Path = DIR_PLANTILLAS / "Datos_Origen_Destino_V1.xlsx"
+PLANTILLA_V2_IMP: Path = DIR_PLANTILLAS / "Datos_Origen_Destino_V2.xlsx"
 
 # ── Alias legacy (compatibilidad con scripts que importan el nombre corto) ──
 DIR_SWIFT_RAIZ    = DIR_SWIFT_RAIZ_IMP
@@ -73,7 +77,8 @@ SWIFT_COMPLETOS   = SWIFT_COMPLETOS_IMP
 SWIFT_MANUALES    = SWIFT_MANUALES_IMP
 ACUMULADO_SWIFT   = DIR_RESULTADOS / "Acumulado_swift.xlsx"
 CACHE_FILE        = CACHE_FILE_IMP
-PLANTILLA         = PLANTILLA_IMP  # alias legacy
+PLANTILLA_V1      = PLANTILLA_V1_IMP
+PLANTILLA_V2      = PLANTILLA_V2_IMP
 
 # =========================================================
 # EXP — Exportaciones
@@ -97,8 +102,9 @@ SWIFT_MANUALES_EXP:  Path = DIR_RESULTADOS / "Swift_manuales_exp.xlsx"
 ACUMULADO_SWIFT_EXP: Path = DIR_RESULTADOS / "Acumulado_swift_exp.xlsx"
 CACHE_FILE_EXP:      Path = DIR_RESULTADOS / ".procesados_cache_exp.json"
 
-# Plantilla Bancolombia EXP (V1 + V2 unificados)
-PLANTILLA_EXP: Path = DIR_PLANTILLAS / "Plantilla_exp.xlsx"
+# Plantillas Bancolombia EXP
+PLANTILLA_V1_EXP: Path = DIR_PLANTILLAS / "Datos_Origen_Destino_V1_exp.xlsx"
+PLANTILLA_V2_EXP: Path = DIR_PLANTILLAS / "Datos_Origen_Destino_V2_exp.xlsx"
 
 # =========================================================
 # EXP — Servicios
@@ -117,13 +123,15 @@ DIR_PDFS_V1_GTO: Path = BASE_ROOT / "pdfs Gto V1"
 DIR_PDFS_V2_GTO: Path = BASE_ROOT / "pdfs Gto V2"
 
 # Salidas GTO
+FACTURAS_GTO:        Path = DIR_RESULTADOS / "Facturas.xlsx"          # input desde Outlook
 SWIFT_COMPLETOS_GTO: Path = DIR_RESULTADOS / "Swift_completos_gto.xlsx"
 SWIFT_MANUALES_GTO:  Path = DIR_RESULTADOS / "Swift_manuales_gto.xlsx"
 ACUMULADO_SWIFT_GTO: Path = DIR_RESULTADOS / "Acumulado_swift_gto.xlsx"
 CACHE_FILE_GTO:      Path = DIR_RESULTADOS / ".procesados_cache_gto.json"
 
-# Plantilla Bancolombia GTO (V1 + V2 unificados)
-PLANTILLA_GTO: Path = DIR_PLANTILLAS / "Plantilla_gto.xlsx"
+# Plantillas Bancolombia GTO
+PLANTILLA_V1_GTO: Path = DIR_PLANTILLAS / "Datos_Origen_Destino_V1_gto.xlsx"
+PLANTILLA_V2_GTO: Path = DIR_PLANTILLAS / "Datos_Origen_Destino_V2_gto.xlsx"
 
 # =========================================================
 # ARCHIVOS DE ENTRADA (Bases de datos) — compartidos
@@ -163,12 +171,13 @@ OD2_COL_LLAVE_OD    = "Llave Origen Destino"
 OCR_LANG   = "eng"
 OCR_CONFIG = r"--oem 3 --psm 6"
 OCR_DPI    = 300
-OCR_MIN_NATIVE_CHARS: int = 99999  
+OCR_MIN_NATIVE_CHARS: int = 99999   # fuerza siempre OCR
 
 # =========================================================
 # PARÁMETROS DE MATCHING Y VALIDACIÓN
 # =========================================================
-TOKEN_MIN_RATIO   = 0.60
+FUZZY_THRESHOLD   = 85
+TOKEN_MIN_RATIO   = 0.50
 TOKEN_MIN_OVERLAP = 2
 
 # =========================================================

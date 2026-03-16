@@ -1,0 +1,52 @@
+[INFO] origen_destino_dian.main | ╔══════════════════════════════════════════╗
+[INFO] origen_destino_dian.main |   INICIO PIPELINE — modo: CRUCES | GASTOS
+[INFO] origen_destino_dian.main |   Base: C:\Proyectos Comodin\Origen_Destino DIAN
+[INFO] origen_destino_dian.main | ╚══════════════════════════════════════════╝
+[INFO] origen_destino_dian.main | ── PASO 3: Cruces [GTO] ──
+[INFO] origen_destino_dian.scripts.run_formulario | === INICIO CRUCE FORMULARIOS + LLAVE [GTO] ===
+[INFO] origen_destino_dian.scripts.run_formulario | XLSB leído → filas=14988 | cols=['FORMULARIO', 'FECHA', 'EMPRESA', 'INDICA', 'DETALLE', 'DEBITO']
+[INFO] origen_destino_dian.scripts.run_formulario | Filtro COM: inicio=14988 → resultado=1086 (FECHA>=2025-04-01, INDICA=GTO)
+[INFO] origen_destino_dian.scripts.run_formulario | [GTO] COM: 856 filas de Comisión excluidas del cruce.
+[INFO] origen_destino_dian.scripts.run_formulario | Paso 3: Cruce Formulario (COM → Swift) [GTO]...
+[ERROR] origen_destino_dian.main | Error en cruces [GTO]: name '_update_formulario_exp_for_sheet' is not defined
+Traceback (most recent call last):
+  File "c:\Proyectos Comodin\Origen_Destino DIAN\main.py", line 236, in _run_cruces
+    stats = run_cruce_completo(tipo=tipo)
+  File "c:\Proyectos Comodin\Origen_Destino DIAN\scripts\run_formulario.py", line 777, in run_cruce_completo
+    df_v1 = _update_formulario_exp_for_sheet(df_v1, df_com_filtrado)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+NameError: name '_update_formulario_exp_for_sheet' is not defined. Did you mean: '_update_formulario_for_sheet'?
+[INFO] origen_destino_dian.main | ╔══════════════════════════════════════════╗
+[INFO] origen_destino_dian.main |   INICIO PIPELINE — modo: CRUCES | GASTOS
+[INFO] origen_destino_dian.main |   Base: C:\Proyectos Comodin\Origen_Destino DIAN
+[INFO] origen_destino_dian.main | ╚══════════════════════════════════════════╝
+[INFO] origen_destino_dian.main | ── PASO 3: Cruces [GTO] ──
+[INFO] origen_destino_dian.scripts.run_formulario | === INICIO CRUCE FORMULARIOS + LLAVE [GTO] ===
+[INFO] origen_destino_dian.scripts.run_formulario | XLSB leído → filas=14988 | cols=['FORMULARIO', 'FECHA', 'EMPRESA', 'INDICA', 'DETALLE', 'DEBITO']
+[INFO] origen_destino_dian.scripts.run_formulario | Filtro COM: inicio=14988 → resultado=1086 (FECHA>=2025-04-01, INDICA=GTO)
+[INFO] origen_destino_dian.scripts.run_formulario | [GTO] COM: 856 filas de Comisión excluidas del cruce.
+[INFO] origen_destino_dian.scripts.run_formulario | Paso 3: Cruce Formulario (COM → Swift) [GTO]...
+[INFO] origen_destino_dian.scripts.run_formulario | [EXP/GTO] Swift actualizado Formulario (DEBITO): updated=16 | multi_matched=4 | multi_ok=0 | multi_fail=4
+[INFO] origen_destino_dian.scripts.run_formulario | Paso 4: Cruce Llave (origenDestino → Swift) [GTO]...
+[INFO] origen_destino_dian.scripts.run_formulario | OrigenDestino mapping cargado: 326 llaves únicas.
+[INFO] origen_destino_dian.scripts.run_formulario | Cruce Llave aplicado: filled=136 | empty_before=136 | empty_after=0
+[INFO] origen_destino_dian.scripts.run_formulario | Paso 5: Actualizando Llave Origen Destino en origenDestino.xlsx [GTO]...
+[INFO] origen_destino_dian.scripts.run_formulario | PASO 5: 16 formularios con llave. Muestra: [('11052', 'one-beat-ltd-pnbpus3nnyc-eb096dbf'), ('10168', 'ford-models-inc-citius33xxx-e401cc5f'), ('10171', 'jewel-ml-inc-chasus33xxx-b33228f3'), ('10170', 'rtb-house-latam-ltd-chasus33xxx-2bc75995'), ('10105', 'rtb-house-latam-ltd-bofaus3mxxx-acd24039')]
+[INFO] origen_destino_dian.scripts.run_formulario | PASO 5 → nuevos=15 | actualizados=0 | sin_match=180
+[INFO] origen_destino_dian.scripts.run_formulario | origenDestino.xlsx guardado (solo 'Llave Origen Destino' modificado, resto intacto).
+[INFO] origen_destino_dian.scripts.run_formulario | === FIN CRUCE [GTO] ===  Formularios=16 | Llaves=136
+[INFO] origen_destino_dian.main | ── PASO 3 completado [GTO] ──
+[INFO] origen_destino_dian.main | ╔══════════════════════════════════════════╗
+[INFO] origen_destino_dian.main |   INICIO PIPELINE — modo: OCR | GASTOS
+[INFO] origen_destino_dian.main |   Base: C:\Proyectos Comodin\Origen_Destino DIAN
+[INFO] origen_destino_dian.main | ╚══════════════════════════════════════════╝
+[INFO] origen_destino_dian.main | ── PASO 1: Lectura correos GTO ──
+[INFO] origen_destino_dian.reader_correos_gto | === INICIO LECTOR CORREOS GTO ===
+[INFO] origen_destino_dian.reader_correos_gto | Facturas.xlsx leído: 136 filas | columnas: ['Receiver', 'DATE', 'Amount', 'Beneficiary Customer']
+[INFO] origen_destino_dian.reader_correos_gto | Bd Swift cargada: 103187 entradas desde hoja 'Sheet1'
+[INFO] origen_destino_dian.reader_correos_gto | Cruce Bd Swift GTO: 136/136 Receivers con Pais/Ciudad
+[INFO] origen_destino_dian.reader_correos_gto | Total=136 | Completos=136 | Incompletos=0
+[INFO] origen_destino_dian.reader_correos_gto | Swift_completos_gto.xlsx: todos los registros ya existían, sin cambios.
+[INFO] origen_destino_dian.reader_correos_gto | Sin registros incompletos — Swift_manuales_gto no requerido.
+[INFO] origen_destino_dian.reader_correos_gto | === FIN LECTOR CORREOS GTO ===
+[INFO] origen_destino_dian.main | ── PASO 1 completado [GTO] ── Total=136 | Completos=136 | Incompletos=0

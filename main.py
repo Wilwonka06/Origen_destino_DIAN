@@ -1,24 +1,16 @@
+# -*- coding: utf-8 -*-
 """
 main.py — Orquestador del pipeline Origen_Destino_DIAN
 
 MODOS DE EJECUCIÓN:
-  Todos los modos aceptan --tipo imp (default) o --tipo exp.
-  La lógica es idéntica — solo cambian los archivos que se procesan.
-
-  python main.py                        → proceso completo IMP
-  python main.py --tipo exp             → proceso completo EXP
-  python main.py --modo ocr             → solo extracción OCR
-  python main.py --modo post_auto       → pasar manuales a completos
-  python main.py --modo plantilla       → generar plantilla Bancolombia
-  python main.py --modo cruces          → solo cruces
-  python main.py --forzar               → ignora caché (aplica al modo ocr)
-  python gui_launcher.py                → interfaz gráfica
-
-FLUJO COMPLETO (igual para IMP y EXP, cambia solo --tipo):
-  1. ocr       → extrae PDFs → Swift_completos_{tipo}
-  2. post_auto → manuales → completos + acumulado
-  3. plantilla → genera Datos_Origen_Destino_V1/V2_{tipo}  ← subir a Bancolombia
-  4. cruces    → Formulario + Llave + Llave OD  ← requiere origenDestino descargado
+  python main.py                              → pipeline completo IMP
+  python main.py --tipo exp                   → pipeline completo EXP
+  python main.py --tipo gto                   → pipeline completo GTO (desde Facturas.xlsx)
+  python main.py --modo cruces --tipo imp     → solo cruces IMP
+  python main.py --modo ocr    --tipo exp     → solo OCR EXP
+  python main.py --modo ocr    --tipo gto     → solo lectura correos GTO
+  python main.py --forzar                     → ignora caché
+  python gui_launcher.py                      → interfaz gráfica
 """
 
 from __future__ import annotations
@@ -59,7 +51,6 @@ class PipelineResult:
     manuales_movidos:    int = 0
     manuales_pendientes: int = 0
 
-    plantilla_registros:  int = 0
     formularios_cruzados: int = 0
     llaves_cruzadas:      int = 0
 
@@ -74,7 +65,8 @@ class PipelineResult:
         return 0.0
 
     def resumen(self) -> str:
-        tipo_label = "IMPORTACIONES" if self.tipo == "imp" else "EXPORTACIONES"
+        tipo_labels = {"imp": "IMPORTACIONES", "exp": "EXPORTACIONES", "gto": "GASTOS"}
+        tipo_label = tipo_labels.get(self.tipo, self.tipo.upper())
         lines = [
             "=" * 60,
             f"  RESUMEN — modo: {self.modo.upper()}  |  {tipo_label}",
@@ -95,8 +87,6 @@ class PipelineResult:
                 f"  Manuales movidos:     {self.manuales_movidos}",
                 f"  Manuales pendientes:  {self.manuales_pendientes}",
             ]
-        if self.plantilla_registros:
-            lines.append(f"  Plantilla generada:   {self.plantilla_registros} registros")
         if self.formularios_cruzados:
             lines.append(f"  Formularios cruzados: {self.formularios_cruzados}")
         if self.llaves_cruzadas:
@@ -117,39 +107,30 @@ class PipelineResult:
 # =========================================================
 # PASO 1 — EXTRACCIÓN OCR
 # =========================================================
-def _run_ocr(result: PipelineResult, forzar: bool = False, tipo: str = "imp") -> None:
-    LOGGER.info(f"── PASO 1: Extracción OCR [{tipo.upper()}] ──")
-
+def _run_correos_gto(result: PipelineResult) -> None:
+    """Paso 1 GTO: extrae Facturas.xlsx → Swift_manuales_gto.xlsx"""
+    LOGGER.info("── PASO 1: Lectura correos GTO ──")
     try:
-        validate_output_dirs(config.DIR_RESULTADOS)
+        from scripts.reader_correos_gto import run_lector_correos_gto
+        stats = run_lector_correos_gto()
+        LOGGER.info(
+            f"── PASO 1 completado [GTO] ── "
+            f"Total={stats['total']} | Completos={stats['completos']} | "
+            f"Incompletos={stats['incompletos']}"
+        )
+        if stats["incompletos"] > 0:
+            result.advertencias.append(
+                f"GTO: {stats['incompletos']} registro(s) incompletos en Swift_manuales_gto.xlsx. "
+                "Revisá y completá antes de continuar."
+            )
     except FileNotFoundError as e:
         result.errores.append(str(e))
         result.exitoso = False
-        return
-
-    cache_file = config.CACHE_FILE_IMP if tipo == "imp" else config.CACHE_FILE_EXP
-    cache = PdfCache(cache_file)
-    if forzar:
-        LOGGER.info("Modo --forzar activo: vaciando caché")
-        cache.clear()
-
-    try:
-        from scripts.run_pipeline import run_pipeline_completo
-        stats = run_pipeline_completo(cache=cache, debug=config.DEBUG, tipo=tipo)
-
-        result.pdfs_nuevos_v1   = stats.get("nuevos_v1", 0)
-        result.pdfs_nuevos_v2   = stats.get("nuevos_v2", 0)
-        result.pdfs_completos   = stats.get("completos", 0)
-        result.pdfs_incompletos = stats.get("incompletos", 0)
-        result.pdfs_error       = stats.get("errores", 0)
-
-        cache.save()
-        LOGGER.info(f"── PASO 1 completado [{tipo.upper()}] ──")
-
+        LOGGER.error(f"PASO 1 GTO: {e}")
     except Exception as e:
-        LOGGER.error(f"Error en extracción OCR: {e}", exc_info=True)
-        result.errores.append(f"Extracción OCR: {e}")
+        result.errores.append(f"PASO 1 GTO inesperado: {e}")
         result.exitoso = False
+        LOGGER.error(f"PASO 1 GTO: {e}", exc_info=True)
 
 
 # =========================================================
@@ -162,8 +143,25 @@ def _run_post_manual(
 ) -> None:
     LOGGER.info(f"── PASO 2: Post validación [{tipo.upper()}] ──")
 
-    # Seleccionar archivos según tipo
-    swift_manuales = config.SWIFT_MANUALES_IMP if tipo == "imp" else config.SWIFT_MANUALES_EXP
+    # GTO: la plantilla se genera directo desde Swift_completos.
+    # Swift_manuales solo existe si hubo registros incompletos.
+    if tipo == "gto":
+        try:
+            from scripts.post_validacion_swift import run_post_validacion
+            stats = run_post_validacion(tipo="gto")
+            result.manuales_movidos = stats.get("movidos", 0)
+            LOGGER.info(f"── PASO 2 completado [GTO] ── movidos={result.manuales_movidos}")
+        except Exception as e:
+            LOGGER.error(f"Error en post validación GTO: {e}", exc_info=True)
+            result.errores.append(f"Post validación GTO: {e}")
+            result.exitoso = False
+        return
+
+    # IMP / EXP: flujo original con Swift_manuales
+    if tipo == "imp":
+        swift_manuales = config.SWIFT_MANUALES_IMP
+    else:
+        swift_manuales = config.SWIFT_MANUALES_EXP
 
     if not swift_manuales.exists():
         result.advertencias.append(
@@ -209,47 +207,17 @@ def _run_post_manual(
 
 
 # =========================================================
-# PASO 3 — GENERAR PLANTILLA BANCOLOMBIA
-# =========================================================
-def _run_plantilla(result: PipelineResult, tipo: str = "imp") -> None:
-    LOGGER.info(f"── PASO 3: Generar Plantilla Bancolombia [{tipo.upper()}] ──")
-
-    swift_completos = (
-        config.SWIFT_COMPLETOS_IMP if tipo == "imp"
-        else config.SWIFT_COMPLETOS_EXP
-    )
-
-    if not swift_completos.exists():
-        result.advertencias.append(
-            f"Swift_completos no existe. Ejecuta primero la extracción OCR."
-        )
-        return
-
-    try:
-        from scripts.post_validacion_swift import run_generar_plantilla
-        stats = run_generar_plantilla(tipo=tipo)
-        result.plantilla_registros = stats.get("registros", 0)
-        LOGGER.info(
-            f"── PASO 3 completado: {result.plantilla_registros} registros "
-            f"en plantilla [{tipo.upper()}] ──"
-        )
-
-    except Exception as e:
-        LOGGER.error(f"Error generando plantilla: {e}", exc_info=True)
-        result.errores.append(f"Generar plantilla: {e}")
-        result.exitoso = False
-
-
-# =========================================================
-# PASO 4 — CRUCES (IMP y EXP)
+# PASO 3 — CRUCES (solo IMP por ahora)
 # =========================================================
 def _run_cruces(result: PipelineResult, tipo: str = "imp") -> None:
-    LOGGER.info(f"── PASO 4: Cruces [{tipo.upper()}] ──")
+    LOGGER.info(f"── PASO 3: Cruces [{tipo.upper()}] ──")
 
-    swift_completos = (
-        config.SWIFT_COMPLETOS_IMP if tipo == "imp"
-        else config.SWIFT_COMPLETOS_EXP
-    )
+    if tipo == "imp":
+        swift_completos = config.SWIFT_COMPLETOS_IMP
+    elif tipo == "exp":
+        swift_completos = config.SWIFT_COMPLETOS_EXP
+    else:  # gto
+        swift_completos = config.SWIFT_COMPLETOS_GTO
 
     try:
         validate_input_files(
@@ -268,11 +236,11 @@ def _run_cruces(result: PipelineResult, tipo: str = "imp") -> None:
         stats = run_cruce_completo(tipo=tipo)
         result.formularios_cruzados = stats.get("formularios", 0)
         result.llaves_cruzadas      = stats.get("llaves", 0)
-        LOGGER.info(f"── PASO 4 completado [{tipo.upper()}] ──")
+        LOGGER.info(f"── PASO 3 completado [{tipo.upper()}] ──")
 
     except Exception as e:
-        LOGGER.error(f"Error en cruces: {e}", exc_info=True)
-        result.errores.append(f"Cruces: {e}")
+        LOGGER.error(f"Error en cruces [{tipo.upper()}]: {e}", exc_info=True)
+        result.errores.append(f"Cruces [{tipo.upper()}]: {e}")
         result.exitoso = False
 
 
@@ -289,47 +257,55 @@ def run_pipeline(
     Ejecuta el pipeline.
 
     Parámetros:
-        modo      : "completo" | "ocr" | "post" | "post_auto" | "plantilla" | "cruces"
-        forzar    : ignorar caché
+        modo      : "completo" | "ocr" | "post" | "post_auto" | "cruces"
+        forzar    : ignorar caché (solo IMP/EXP con PDFs)
         confirmar : pedir confirmación antes de mover manuales
-        tipo      : "imp" | "exp"
+        tipo      : "imp" | "exp" | "gto"
     """
     tipo = tipo.lower().strip()
+    modo = modo.lower().strip()
+    # "plantilla" es alias de "post_auto" — la GUI lo envía como "plantilla"
+    if modo == "plantilla":
+        modo = "post_auto"
     result = PipelineResult(modo=modo, tipo=tipo)
 
-    tipo_label = "IMPORTACIONES" if tipo == "imp" else "EXPORTACIONES"
+    tipo_labels = {"imp": "IMPORTACIONES", "exp": "EXPORTACIONES", "gto": "GASTOS"}
+    tipo_label = tipo_labels.get(tipo, tipo.upper())
     LOGGER.info(f"╔══════════════════════════════════════════╗")
     LOGGER.info(f"  INICIO PIPELINE — modo: {modo.upper()} | {tipo_label}")
     LOGGER.info(f"  Base: {config.BASE_ROOT}")
     LOGGER.info(f"╚══════════════════════════════════════════╝")
 
     try:
-        # Paso 1: Extracción OCR
+        # PASO 1: extracción
         if modo in ("completo", "ocr"):
-            _run_ocr(result, forzar=forzar, tipo=tipo)
+            if tipo == "gto":
+                # GTO no usa OCR de PDFs — lee Facturas.xlsx generado desde Outlook
+                _run_correos_gto(result)
+            else:
+                _run_ocr(result, forzar=forzar, tipo=tipo)
 
-        # Paso 2: Pasar manuales a completos + acumulado
+        # PASO 2: post validación (mover manuales completos → completos)
         if modo in ("completo", "post"):
             _run_post_manual(result, confirmar=confirmar, tipo=tipo)
 
         if modo == "post_auto":
             _run_post_manual(result, confirmar=False, tipo=tipo)
 
-        # Paso 3: Generar plantilla Bancolombia
-        if modo in ("completo", "plantilla"):
-            _run_plantilla(result, tipo=tipo)
-
-        # Paso 4: Cruces (Formulario + Llave + Llave OD)
+        # PASO 3: cruces Formulario + Llave
         if modo in ("completo", "cruces"):
-            swift_completos = (
-                config.SWIFT_COMPLETOS_IMP if tipo == "imp"
-                else config.SWIFT_COMPLETOS_EXP
-            )
+            if tipo == "imp":
+                swift_completos = config.SWIFT_COMPLETOS_IMP
+            elif tipo == "exp":
+                swift_completos = config.SWIFT_COMPLETOS_EXP
+            else:  # gto
+                swift_completos = config.SWIFT_COMPLETOS_GTO
+
             if swift_completos.exists():
                 _run_cruces(result, tipo=tipo)
             else:
                 result.advertencias.append(
-                    f"Swift_completos no existe. Cruces omitidos."
+                    f"Swift_completos_{tipo}.xlsx no existe. Cruces omitidos."
                 )
 
     except Exception as e:
@@ -359,9 +335,9 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--tipo",
-        choices=["imp", "exp"],
+        choices=["imp", "exp", "gto"],
         default="imp",
-        help="Tipo: imp=Importaciones | exp=Exportaciones (default: imp)",
+        help="Tipo: imp=Importaciones | exp=Exportaciones | gto=Gastos (default: imp)",
     )
     parser.add_argument(
         "--forzar",
