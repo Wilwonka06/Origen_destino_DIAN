@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+
 """
 main.py — Orquestador del pipeline Origen_Destino_DIAN
 

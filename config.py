@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+
 """
 config.py — Configuración centralizada del proyecto Origen_Destino_DIAN
 
@@ -177,7 +177,7 @@ OCR_MIN_NATIVE_CHARS: int = 99999   # fuerza siempre OCR
 # PARÁMETROS DE MATCHING Y VALIDACIÓN
 # =========================================================
 FUZZY_THRESHOLD   = 85
-TOKEN_MIN_RATIO   = 0.50
+TOKEN_MIN_RATIO   = 0.60
 TOKEN_MIN_OVERLAP = 2
 
 # =========================================================

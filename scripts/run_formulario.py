@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 run_formulario.py — Cruces de Formulario, Llave y Llave OD
 
@@ -87,6 +86,18 @@ def _tokenize(s: str) -> List[str]:
         return []
     return re.findall(r"[a-z0-9]+", _normalize_text_key(s))
 
+_NOISE_TOKENS = {
+    "llc", "inc", "ltd", "co", "corp", "corporation", "company",
+    "sa", "sas", "sl", "srl", "spa", "plc", "gmbh", "bv", "nv",
+    "limited", "holdings", "holding",
+}
+
+
+def _meaningful_tokens(s: str) -> List[str]:
+    """Tokens útiles para matching (sin sufijos societarios comunes)."""
+    tokens = _tokenize(s)
+    cleaned = [t for t in tokens if t not in _NOISE_TOKENS]
+    return cleaned or tokens
 
 def _clean_detalle(detalle) -> str:
     """Extrae el texto ANTES del '#' en DETALLE de COM y normaliza."""
@@ -134,6 +145,13 @@ def _parse_money_to_float(v) -> float:
     except Exception:
         return float("nan")
 
+def _amount_close(a, b) -> bool:
+    """Comparación de montos robusta a redondeos de origen Excel/Bancos."""
+    if pd.isna(a) or pd.isna(b):
+        return False
+    # Mantiene AMOUNT_TOL pero evita falsos negativos por diferencias de 1-3 centavos.
+    tol = max(float(AMOUNT_TOL), 0.05)
+    return abs(float(a) - float(b)) <= tol
 
 # =========================================================
 # MATCH ROBUSTO (tokens)
@@ -144,7 +162,7 @@ def _tokens_match(swift_clean: str, detalle_clean: str) -> bool:
     - nombre >= 2 tokens: exige las primeras 2 palabras + ratio >= TOKEN_MIN_RATIO
     - nombre 1 token: ese token debe estar en detalle
     """
-    st = _tokenize(swift_clean)
+    st = _meaningful_tokens(swift_clean)
     dt = set(_tokenize(detalle_clean))
 
     if not st:
@@ -356,6 +374,15 @@ def _update_formulario_for_sheet(
         ].copy()
 
         if cand.empty:
+            # Fallback: si texto no matchea, intentar por fecha + monto único.
+            if pd.notna(s_amount):
+                by_amount = com_day.loc[com_day["debito_num"].apply(lambda x: _amount_close(x, s_amount))].copy()
+                if len(by_amount) == 1:
+                    form_val = str(by_amount.iloc[0]["formulario_str"]).strip()
+                    if form_val and form_val.lower() not in ("none", "nan", "nat", ""):
+                        out.loc[out["id"] == sid, "Formulario"] = form_val
+                        updated += 1
+                        continue
             continue
 
         if len(cand) == 1:
@@ -367,10 +394,24 @@ def _update_formulario_for_sheet(
 
         # Múltiples candidatos → verificar suma de débitos
         multi_matched += 1
-        deb_sum = cand["debito_num"].sum(skipna=True)
 
-        if pd.notna(deb_sum) and pd.notna(s_amount) and abs(deb_sum - s_amount) <= AMOUNT_TOL:
-            cand  = cand.sort_values("row_order")
+        # 1) Si hay un candidato único con monto exacto, preferirlo
+        if pd.notna(s_amount):
+            cand_exact = cand.loc[cand["debito_num"].apply(
+                lambda x: pd.notna(x) and _amount_close(x, s_amount)
+            )].copy()
+            if len(cand_exact) == 1:
+                form_val = str(cand_exact.iloc[0]["formulario_str"]).strip()
+                if form_val and form_val.lower() not in ("none", "nan", "nat", ""):
+                    out.loc[out["id"] == sid, "Formulario"] = form_val
+                    updated += 1
+                    multi_ok += 1
+                    continue
+
+        # 2) Fallback: suma de todos los candidatos
+        deb_sum = cand["debito_num"].sum(skipna=True)
+        if pd.notna(deb_sum) and pd.notna(s_amount) and _amount_close(deb_sum, s_amount):
+            cand = cand.sort_values("row_order")
             forms = [
                 str(x).strip()
                 for x in cand["formulario_str"].tolist()
@@ -465,6 +506,15 @@ def _update_formulario_exp_for_sheet(
         ].copy()
 
         if cand.empty:
+            # Fallback: si texto no matchea, intentar por fecha + monto único.
+            if pd.notna(s_amount):
+                by_amount = com_day.loc[com_day["debito_num"].apply(lambda x: _amount_close(x, s_amount))].copy()
+                if len(by_amount) == 1:
+                    form_val = str(by_amount.iloc[0]["formulario_str"]).strip()
+                    if form_val and form_val.lower() not in ("none", "nan", "nat", ""):
+                        out.loc[out["id"] == sid, "Formulario"] = form_val
+                        updated += 1
+                        continue
             continue
 
         if len(cand) == 1:
@@ -476,10 +526,23 @@ def _update_formulario_exp_for_sheet(
 
         # Múltiples candidatos → verificar suma de montos
         multi_matched += 1
-        monto_sum = cand["debito_num"].sum(skipna=True)
+        # 1) Si hay un candidato único con monto exacto, preferirlo
+        if pd.notna(s_amount):
+            cand_exact = cand.loc[cand["debito_num"].apply(
+                lambda x: pd.notna(x) and _amount_close(x, s_amount)
+            )].copy()
+            if len(cand_exact) == 1:
+                form_val = str(cand_exact.iloc[0]["formulario_str"]).strip()
+                if form_val and form_val.lower() not in ("none", "nan", "nat", ""):
+                    out.loc[out["id"] == sid, "Formulario"] = form_val
+                    updated += 1
+                    multi_ok += 1
+                    continue
 
-        if pd.notna(monto_sum) and pd.notna(s_amount) and abs(monto_sum - s_amount) <= AMOUNT_TOL:
-            cand  = cand.sort_values("row_order")
+        # 2) Fallback: suma de todos los candidatos
+        monto_sum = cand["debito_num"].sum(skipna=True)
+        if pd.notna(monto_sum) and pd.notna(s_amount) and _amount_close(monto_sum, s_amount):
+            cand = cand.sort_values("row_order")
             forms = [
                 str(x).strip()
                 for x in cand["formulario_str"].tolist()

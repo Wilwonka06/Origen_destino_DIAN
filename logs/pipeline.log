@@ -50,3 +50,214 @@ NameError: name '_update_formulario_exp_for_sheet' is not defined. Did you mean:
 [INFO] origen_destino_dian.reader_correos_gto | Sin registros incompletos — Swift_manuales_gto no requerido.
 [INFO] origen_destino_dian.reader_correos_gto | === FIN LECTOR CORREOS GTO ===
 [INFO] origen_destino_dian.main | ── PASO 1 completado [GTO] ── Total=136 | Completos=136 | Incompletos=0
+[INFO] origen_destino_dian.main | ╔══════════════════════════════════════════╗
+[INFO] origen_destino_dian.main |   INICIO PIPELINE — modo: CRUCES | GASTOS
+[INFO] origen_destino_dian.main |   Base: C:\Proyectos Comodin\Origen_Destino DIAN
+[INFO] origen_destino_dian.main | ╚══════════════════════════════════════════╝
+[INFO] origen_destino_dian.main | ── PASO 3: Cruces [GTO] ──
+[INFO] origen_destino_dian.scripts.run_formulario | === INICIO CRUCE FORMULARIOS + LLAVE [GTO] ===
+[INFO] origen_destino_dian.scripts.run_formulario | XLSB leído → filas=14988 | cols=['FORMULARIO', 'FECHA', 'EMPRESA', 'INDICA', 'DETALLE', 'DEBITO']
+[INFO] origen_destino_dian.scripts.run_formulario | Filtro COM: inicio=14988 → resultado=1086 (FECHA>=2025-04-01, INDICA=GTO)
+[INFO] origen_destino_dian.scripts.run_formulario | [GTO] COM: 856 filas de Comisión excluidas del cruce.
+[INFO] origen_destino_dian.scripts.run_formulario | Paso 3: Cruce Formulario (COM → Swift) [GTO]...
+[INFO] origen_destino_dian.scripts.run_formulario | [EXP/GTO] Swift actualizado Formulario (DEBITO): updated=43 | multi_matched=26 | multi_ok=0 | multi_fail=26
+[INFO] origen_destino_dian.scripts.run_formulario | Paso 4: Cruce Llave (origenDestino → Swift) [GTO]...
+[INFO] origen_destino_dian.scripts.run_formulario | OrigenDestino mapping cargado: 326 llaves únicas.
+[INFO] origen_destino_dian.scripts.run_formulario | Cruce Llave aplicado: filled=0 | empty_before=0 | empty_after=0
+[INFO] origen_destino_dian.scripts.run_formulario | Paso 5: Actualizando Llave Origen Destino en origenDestino.xlsx [GTO]...
+[INFO] origen_destino_dian.scripts.run_formulario | PASO 5: 43 formularios con llave. Muestra: [('11085', 'ah-creative-lab-llc-pnbpus3nnyc-a3f42f6d'), ('11086', 'google-llc-pnbpus3nnyc-3eb473cc'), ('11084', 'botmaker-inc-pnbpus3nnyc-6c9e5a7a'), ('11052', 'one-beat-ltd-pnbpus3nnyc-eb096dbf'), ('11025', 'fashion-trademarks-holding-sl-chasus33xxx-c6ac0d7d')]
+[INFO] origen_destino_dian.scripts.run_formulario | PASO 5 → nuevos=23 | actualizados=0 | sin_match=157
+[INFO] origen_destino_dian.scripts.run_formulario | origenDestino.xlsx guardado (solo 'Llave Origen Destino' modificado, resto intacto).
+[INFO] origen_destino_dian.scripts.run_formulario | === FIN CRUCE [GTO] ===  Formularios=43 | Llaves=136
+[INFO] origen_destino_dian.main | ── PASO 3 completado [GTO] ──
+[INFO] origen_destino_dian.main | ╔══════════════════════════════════════════╗
+[INFO] origen_destino_dian.main |   INICIO PIPELINE — modo: CRUCES | GASTOS
+[INFO] origen_destino_dian.main |   Base: C:\Proyectos Comodin\Origen_Destino DIAN
+[INFO] origen_destino_dian.main | ╚══════════════════════════════════════════╝
+[INFO] origen_destino_dian.main | ── PASO 3: Cruces [GTO] ──
+[INFO] origen_destino_dian.scripts.run_formulario | === INICIO CRUCE FORMULARIOS + LLAVE [GTO] ===
+[INFO] origen_destino_dian.scripts.run_formulario | XLSB leído → filas=14988 | cols=['FORMULARIO', 'FECHA', 'EMPRESA', 'INDICA', 'DETALLE', 'DEBITO']
+[INFO] origen_destino_dian.scripts.run_formulario | Filtro COM: inicio=14988 → resultado=1086 (FECHA>=2025-04-01, INDICA=GTO)
+[INFO] origen_destino_dian.scripts.run_formulario | [GTO] COM: 856 filas de Comisión excluidas del cruce.
+[INFO] origen_destino_dian.scripts.run_formulario | Paso 3: Cruce Formulario (COM → Swift) [GTO]...
+[INFO] origen_destino_dian.scripts.run_formulario | [EXP/GTO] Swift actualizado Formulario (DEBITO): updated=43 | multi_matched=26 | multi_ok=0 | multi_fail=26
+[INFO] origen_destino_dian.scripts.run_formulario | Paso 4: Cruce Llave (origenDestino → Swift) [GTO]...
+[INFO] origen_destino_dian.scripts.run_formulario | OrigenDestino mapping cargado: 326 llaves únicas.
+[INFO] origen_destino_dian.scripts.run_formulario | Cruce Llave aplicado: filled=0 | empty_before=0 | empty_after=0
+[INFO] origen_destino_dian.scripts.run_formulario | Paso 5: Actualizando Llave Origen Destino en origenDestino.xlsx [GTO]...
+[INFO] origen_destino_dian.scripts.run_formulario | PASO 5: 43 formularios con llave. Muestra: [('11085', 'ah-creative-lab-llc-pnbpus3nnyc-a3f42f6d'), ('11086', 'google-llc-pnbpus3nnyc-3eb473cc'), ('11084', 'botmaker-inc-pnbpus3nnyc-6c9e5a7a'), ('11052', 'one-beat-ltd-pnbpus3nnyc-eb096dbf'), ('11025', 'fashion-trademarks-holding-sl-chasus33xxx-c6ac0d7d')]
+[INFO] origen_destino_dian.scripts.run_formulario | PASO 5 → nuevos=0 | actualizados=0 | sin_match=157
+[INFO] origen_destino_dian.scripts.run_formulario | origenDestino.xlsx guardado (solo 'Llave Origen Destino' modificado, resto intacto).
+[INFO] origen_destino_dian.scripts.run_formulario | === FIN CRUCE [GTO] ===  Formularios=43 | Llaves=136
+[INFO] origen_destino_dian.main | ── PASO 3 completado [GTO] ──
+[INFO] origen_destino_dian.main | ╔══════════════════════════════════════════╗
+[INFO] origen_destino_dian.main |   INICIO PIPELINE — modo: CRUCES | GASTOS
+[INFO] origen_destino_dian.main |   Base: C:\Proyectos Comodin\Origen_Destino DIAN
+[INFO] origen_destino_dian.main | ╚══════════════════════════════════════════╝
+[INFO] origen_destino_dian.main | ── PASO 3: Cruces [GTO] ──
+[INFO] origen_destino_dian.scripts.run_formulario | === INICIO CRUCE FORMULARIOS + LLAVE [GTO] ===
+[INFO] origen_destino_dian.scripts.run_formulario | XLSB leído → filas=14988 | cols=['FORMULARIO', 'FECHA', 'EMPRESA', 'INDICA', 'DETALLE', 'DEBITO']
+[INFO] origen_destino_dian.scripts.run_formulario | Filtro COM: inicio=14988 → resultado=1086 (FECHA>=2025-04-01, INDICA=GTO)
+[INFO] origen_destino_dian.scripts.run_formulario | [GTO] COM: 856 filas de Comisión excluidas del cruce.
+[INFO] origen_destino_dian.scripts.run_formulario | Paso 3: Cruce Formulario (COM → Swift) [GTO]...
+[INFO] origen_destino_dian.scripts.run_formulario | [EXP/GTO] Swift actualizado Formulario (DEBITO): updated=42 | multi_matched=26 | multi_ok=0 | multi_fail=26
+[INFO] origen_destino_dian.scripts.run_formulario | Paso 4: Cruce Llave (origenDestino → Swift) [GTO]...
+[INFO] origen_destino_dian.scripts.run_formulario | OrigenDestino mapping cargado: 326 llaves únicas.
+[INFO] origen_destino_dian.scripts.run_formulario | Cruce Llave aplicado: filled=0 | empty_before=0 | empty_after=0
+[INFO] origen_destino_dian.scripts.run_formulario | Paso 5: Actualizando Llave Origen Destino en origenDestino.xlsx [GTO]...
+[INFO] origen_destino_dian.scripts.run_formulario | PASO 5: 43 formularios con llave. Muestra: [('11085', 'ah-creative-lab-llc-pnbpus3nnyc-a3f42f6d'), ('11086', 'google-llc-pnbpus3nnyc-3eb473cc'), ('11084', 'botmaker-inc-pnbpus3nnyc-6c9e5a7a'), ('11052', 'one-beat-ltd-pnbpus3nnyc-eb096dbf'), ('11025', 'fashion-trademarks-holding-sl-chasus33xxx-c6ac0d7d')]
+[INFO] origen_destino_dian.scripts.run_formulario | PASO 5 → nuevos=0 | actualizados=0 | sin_match=157
+[INFO] origen_destino_dian.scripts.run_formulario | origenDestino.xlsx guardado (solo 'Llave Origen Destino' modificado, resto intacto).
+[INFO] origen_destino_dian.scripts.run_formulario | === FIN CRUCE [GTO] ===  Formularios=43 | Llaves=136
+[INFO] origen_destino_dian.main | ── PASO 3 completado [GTO] ──
+[INFO] origen_destino_dian.main | ╔══════════════════════════════════════════╗
+[INFO] origen_destino_dian.main |   INICIO PIPELINE — modo: CRUCES | GASTOS
+[INFO] origen_destino_dian.main |   Base: C:\Proyectos Comodin\Origen_Destino DIAN
+[INFO] origen_destino_dian.main | ╚══════════════════════════════════════════╝
+[INFO] origen_destino_dian.main | ── PASO 3: Cruces [GTO] ──
+[INFO] origen_destino_dian.scripts.run_formulario | === INICIO CRUCE FORMULARIOS + LLAVE [GTO] ===
+[INFO] origen_destino_dian.scripts.run_formulario | XLSB leído → filas=14988 | cols=['FORMULARIO', 'FECHA', 'EMPRESA', 'INDICA', 'DETALLE', 'DEBITO']
+[INFO] origen_destino_dian.scripts.run_formulario | Filtro COM: inicio=14988 → resultado=1086 (FECHA>=2025-04-01, INDICA=GTO)
+[INFO] origen_destino_dian.scripts.run_formulario | [GTO] COM: 856 filas de Comisión excluidas del cruce.
+[INFO] origen_destino_dian.scripts.run_formulario | Paso 3: Cruce Formulario (COM → Swift) [GTO]...
+[INFO] origen_destino_dian.scripts.run_formulario | [EXP/GTO] Swift actualizado Formulario (DEBITO): updated=42 | multi_matched=26 | multi_ok=0 | multi_fail=26
+[INFO] origen_destino_dian.scripts.run_formulario | Paso 4: Cruce Llave (origenDestino → Swift) [GTO]...
+[INFO] origen_destino_dian.scripts.run_formulario | OrigenDestino mapping cargado: 326 llaves únicas.
+[INFO] origen_destino_dian.scripts.run_formulario | Cruce Llave aplicado: filled=0 | empty_before=0 | empty_after=0
+[ERROR] origen_destino_dian.main | Error en cruces [GTO]: 
+============================================================
+  [run_formulario_gto] No se pudo guardar Swift_completos_gto.xlsx — está abierto en Excel.
+  Cerralo y volvé a ejecutar.
+  Ruta: C:\Proyectos Comodin\Origen_Destino DIAN\resultados\Swift_completos_gto.xlsx
+============================================================
+Traceback (most recent call last):
+  File "c:\Proyectos Comodin\Origen_Destino DIAN\core\excel_utils.py", line 136, in write_sheets
+    with pd.ExcelWriter(path, **writer_kwargs) as writer:
+         ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ATESORERIA\AppData\Local\Programs\Python\Python314\Lib\site-packages\pandas\io\excel\_openpyxl.py", line 62, in __init__
+    super().__init__(
+    ~~~~~~~~~~~~~~~~^
+        path,
+        ^^^^^
+    ...<3 lines>...
+        engine_kwargs=engine_kwargs,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\ATESORERIA\AppData\Local\Programs\Python\Python314\Lib\site-packages\pandas\io\excel\_base.py", line 1281, in __init__
+    self._handles = get_handle(
+                    ~~~~~~~~~~^
+        path, mode, storage_options=storage_options, is_text=False
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\ATESORERIA\AppData\Local\Programs\Python\Python314\Lib\site-packages\pandas\io\common.py", line 935, in get_handle
+    handle = open(handle, ioargs.mode)
+PermissionError: [Errno 13] Permission denied: 'C:\\Proyectos Comodin\\Origen_Destino DIAN\\resultados\\Swift_completos_gto.xlsx'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "c:\Proyectos Comodin\Origen_Destino DIAN\main.py", line 236, in _run_cruces
+    stats = run_cruce_completo(tipo=tipo)
+  File "c:\Proyectos Comodin\Origen_Destino DIAN\scripts\run_formulario.py", line 946, in run_cruce_completo
+    write_sheets(
+    ~~~~~~~~~~~~^
+        swift_completos,
+        ^^^^^^^^^^^^^^^^
+        {config.SHEET_V1: df_v1, config.SHEET_V2: df_v2},
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        context=f"run_formulario_{tipo}",
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "c:\Proyectos Comodin\Origen_Destino DIAN\core\excel_utils.py", line 146, in write_sheets
+    raise PermissionError(
+    ...<5 lines>...
+    )
+PermissionError: 
+============================================================
+  [run_formulario_gto] No se pudo guardar Swift_completos_gto.xlsx — está abierto en Excel.
+  Cerralo y volvé a ejecutar.
+  Ruta: C:\Proyectos Comodin\Origen_Destino DIAN\resultados\Swift_completos_gto.xlsx
+============================================================
+[INFO] origen_destino_dian.main | ╔══════════════════════════════════════════╗
+[INFO] origen_destino_dian.main |   INICIO PIPELINE — modo: CRUCES | GASTOS
+[INFO] origen_destino_dian.main |   Base: C:\Proyectos Comodin\Origen_Destino DIAN
+[INFO] origen_destino_dian.main | ╚══════════════════════════════════════════╝
+[INFO] origen_destino_dian.main | ── PASO 3: Cruces [GTO] ──
+[INFO] origen_destino_dian.scripts.run_formulario | === INICIO CRUCE FORMULARIOS + LLAVE [GTO] ===
+[INFO] origen_destino_dian.scripts.run_formulario | XLSB leído → filas=14988 | cols=['FORMULARIO', 'FECHA', 'EMPRESA', 'INDICA', 'DETALLE', 'DEBITO']
+[INFO] origen_destino_dian.scripts.run_formulario | Filtro COM: inicio=14988 → resultado=1086 (FECHA>=2025-04-01, INDICA=GTO)
+[INFO] origen_destino_dian.scripts.run_formulario | [GTO] COM: 856 filas de Comisión excluidas del cruce.
+[INFO] origen_destino_dian.scripts.run_formulario | Paso 3: Cruce Formulario (COM → Swift) [GTO]...
+[INFO] origen_destino_dian.scripts.run_formulario | [EXP/GTO] Swift actualizado Formulario (DEBITO): updated=42 | multi_matched=26 | multi_ok=0 | multi_fail=26
+[INFO] origen_destino_dian.scripts.run_formulario | Paso 4: Cruce Llave (origenDestino → Swift) [GTO]...
+[INFO] origen_destino_dian.scripts.run_formulario | OrigenDestino mapping cargado: 326 llaves únicas.
+[INFO] origen_destino_dian.scripts.run_formulario | Cruce Llave aplicado: filled=0 | empty_before=0 | empty_after=0
+[INFO] origen_destino_dian.scripts.run_formulario | Paso 5: Actualizando Llave Origen Destino en origenDestino.xlsx [GTO]...
+[INFO] origen_destino_dian.scripts.run_formulario | PASO 5: 43 formularios con llave. Muestra: [('11085', 'ah-creative-lab-llc-pnbpus3nnyc-a3f42f6d'), ('11086', 'google-llc-pnbpus3nnyc-3eb473cc'), ('11084', 'botmaker-inc-pnbpus3nnyc-6c9e5a7a'), ('11052', 'one-beat-ltd-pnbpus3nnyc-eb096dbf'), ('11025', 'fashion-trademarks-holding-sl-chasus33xxx-c6ac0d7d')]
+[INFO] origen_destino_dian.scripts.run_formulario | PASO 5 → nuevos=0 | actualizados=0 | sin_match=157
+[INFO] origen_destino_dian.scripts.run_formulario | origenDestino.xlsx guardado (solo 'Llave Origen Destino' modificado, resto intacto).
+[INFO] origen_destino_dian.scripts.run_formulario | === FIN CRUCE [GTO] ===  Formularios=43 | Llaves=136
+[INFO] origen_destino_dian.main | ── PASO 3 completado [GTO] ──
+[INFO] origen_destino_dian.main | ╔══════════════════════════════════════════╗
+[INFO] origen_destino_dian.main |   INICIO PIPELINE — modo: CRUCES | GASTOS
+[INFO] origen_destino_dian.main |   Base: C:\Proyectos Comodin\Origen_Destino DIAN
+[INFO] origen_destino_dian.main | ╚══════════════════════════════════════════╝
+[INFO] origen_destino_dian.main | ── PASO 3: Cruces [GTO] ──
+[INFO] origen_destino_dian.scripts.run_formulario | === INICIO CRUCE FORMULARIOS + LLAVE [GTO] ===
+[INFO] origen_destino_dian.scripts.run_formulario | XLSB leído → filas=14988 | cols=['FORMULARIO', 'FECHA', 'EMPRESA', 'INDICA', 'DETALLE', 'DEBITO']
+[INFO] origen_destino_dian.scripts.run_formulario | Filtro COM: inicio=14988 → resultado=1086 (FECHA>=2025-04-01, INDICA=GTO)
+[INFO] origen_destino_dian.scripts.run_formulario | [GTO] COM: 856 filas de Comisión excluidas del cruce.
+[INFO] origen_destino_dian.scripts.run_formulario | Paso 3: Cruce Formulario (COM → Swift) [GTO]...
+[INFO] origen_destino_dian.scripts.run_formulario | [EXP/GTO] Swift actualizado Formulario (DEBITO): updated=42 | multi_matched=26 | multi_ok=0 | multi_fail=26
+[INFO] origen_destino_dian.scripts.run_formulario | Paso 4: Cruce Llave (origenDestino → Swift) [GTO]...
+[INFO] origen_destino_dian.scripts.run_formulario | OrigenDestino mapping cargado: 326 llaves únicas.
+[INFO] origen_destino_dian.scripts.run_formulario | Cruce Llave aplicado: filled=0 | empty_before=0 | empty_after=0
+[INFO] origen_destino_dian.scripts.run_formulario | Paso 5: Actualizando Llave Origen Destino en origenDestino.xlsx [GTO]...
+[INFO] origen_destino_dian.scripts.run_formulario | PASO 5: 43 formularios con llave. Muestra: [('11085', 'ah-creative-lab-llc-pnbpus3nnyc-a3f42f6d'), ('11086', 'google-llc-pnbpus3nnyc-3eb473cc'), ('11084', 'botmaker-inc-pnbpus3nnyc-6c9e5a7a'), ('11052', 'one-beat-ltd-pnbpus3nnyc-eb096dbf'), ('11025', 'fashion-trademarks-holding-sl-chasus33xxx-c6ac0d7d')]
+[INFO] origen_destino_dian.scripts.run_formulario | PASO 5 → nuevos=0 | actualizados=0 | sin_match=157
+[INFO] origen_destino_dian.scripts.run_formulario | origenDestino.xlsx guardado (solo 'Llave Origen Destino' modificado, resto intacto).
+[INFO] origen_destino_dian.scripts.run_formulario | === FIN CRUCE [GTO] ===  Formularios=43 | Llaves=136
+[INFO] origen_destino_dian.main | ── PASO 3 completado [GTO] ──
+[INFO] origen_destino_dian.main | ╔══════════════════════════════════════════╗
+[INFO] origen_destino_dian.main |   INICIO PIPELINE — modo: CRUCES | GASTOS
+[INFO] origen_destino_dian.main |   Base: C:\Proyectos Comodin\Origen_Destino DIAN
+[INFO] origen_destino_dian.main | ╚══════════════════════════════════════════╝
+[INFO] origen_destino_dian.main | ── PASO 3: Cruces [GTO] ──
+[INFO] origen_destino_dian.scripts.run_formulario | === INICIO CRUCE FORMULARIOS + LLAVE [GTO] ===
+[INFO] origen_destino_dian.scripts.run_formulario | XLSB leído → filas=14988 | cols=['FORMULARIO', 'FECHA', 'EMPRESA', 'INDICA', 'DETALLE', 'DEBITO']
+[INFO] origen_destino_dian.scripts.run_formulario | Filtro COM: inicio=14988 → resultado=1086 (FECHA>=2025-04-01, INDICA=GTO)
+[INFO] origen_destino_dian.scripts.run_formulario | [GTO] COM: 856 filas de Comisión excluidas del cruce.
+[INFO] origen_destino_dian.scripts.run_formulario | Paso 3: Cruce Formulario (COM → Swift) [GTO]...
+[INFO] origen_destino_dian.scripts.run_formulario | [EXP/GTO] Swift actualizado Formulario (DEBITO): updated=127 | multi_matched=26 | multi_ok=26 | multi_fail=0
+[INFO] origen_destino_dian.scripts.run_formulario | Paso 4: Cruce Llave (origenDestino → Swift) [GTO]...
+[INFO] origen_destino_dian.scripts.run_formulario | OrigenDestino mapping cargado: 326 llaves únicas.
+[INFO] origen_destino_dian.scripts.run_formulario | Cruce Llave aplicado: filled=0 | empty_before=0 | empty_after=0
+[INFO] origen_destino_dian.scripts.run_formulario | Paso 5: Actualizando Llave Origen Destino en origenDestino.xlsx [GTO]...
+[INFO] origen_destino_dian.scripts.run_formulario | PASO 5: 123 formularios con llave. Muestra: [('11085', 'ah-creative-lab-llc-pnbpus3nnyc-a3f42f6d'), ('11086', 'google-llc-pnbpus3nnyc-3eb473cc'), ('11084', 'botmaker-inc-pnbpus3nnyc-6c9e5a7a'), ('11052', 'one-beat-ltd-pnbpus3nnyc-eb096dbf'), ('11051', 'tiktok-inc-citius33xxx-23c04fc5')]
+[INFO] origen_destino_dian.scripts.run_formulario | PASO 5 → nuevos=77 | actualizados=0 | sin_match=80
+[INFO] origen_destino_dian.scripts.run_formulario | origenDestino.xlsx guardado (solo 'Llave Origen Destino' modificado, resto intacto).
+[INFO] origen_destino_dian.scripts.run_formulario | === FIN CRUCE [GTO] ===  Formularios=127 | Llaves=136
+[INFO] origen_destino_dian.main | ── PASO 3 completado [GTO] ──
+[INFO] origen_destino_dian.main | ╔══════════════════════════════════════════╗
+[INFO] origen_destino_dian.main |   INICIO PIPELINE — modo: CRUCES | GASTOS
+[INFO] origen_destino_dian.main |   Base: C:\Proyectos Comodin\Origen_Destino DIAN
+[INFO] origen_destino_dian.main | ╚══════════════════════════════════════════╝
+[INFO] origen_destino_dian.main | ── PASO 3: Cruces [GTO] ──
+[INFO] origen_destino_dian.scripts.run_formulario | === INICIO CRUCE FORMULARIOS + LLAVE [GTO] ===
+[INFO] origen_destino_dian.scripts.run_formulario | XLSB leído → filas=14988 | cols=['FORMULARIO', 'FECHA', 'EMPRESA', 'INDICA', 'DETALLE', 'DEBITO']
+[INFO] origen_destino_dian.scripts.run_formulario | Filtro COM: inicio=14988 → resultado=1086 (FECHA>=2025-04-01, INDICA=GTO)
+[INFO] origen_destino_dian.scripts.run_formulario | [GTO] COM: 856 filas de Comisión excluidas del cruce.
+[INFO] origen_destino_dian.scripts.run_formulario | Paso 3: Cruce Formulario (COM → Swift) [GTO]...
+[INFO] origen_destino_dian.scripts.run_formulario | [EXP/GTO] Swift actualizado Formulario (DEBITO): updated=127 | multi_matched=26 | multi_ok=26 | multi_fail=0
+[INFO] origen_destino_dian.scripts.run_formulario | Paso 4: Cruce Llave (origenDestino → Swift) [GTO]...
+[INFO] origen_destino_dian.scripts.run_formulario | OrigenDestino mapping cargado: 326 llaves únicas.
+[INFO] origen_destino_dian.scripts.run_formulario | Cruce Llave aplicado: filled=0 | empty_before=0 | empty_after=0
+[INFO] origen_destino_dian.scripts.run_formulario | Paso 5: Actualizando Llave Origen Destino en origenDestino.xlsx [GTO]...
+[INFO] origen_destino_dian.scripts.run_formulario | PASO 5: 129 formularios con llave. Muestra: [('11085', 'ah-creative-lab-llc-pnbpus3nnyc-a3f42f6d'), ('11086', 'google-llc-pnbpus3nnyc-3eb473cc'), ('11084', 'botmaker-inc-pnbpus3nnyc-6c9e5a7a'), ('11052', 'one-beat-ltd-pnbpus3nnyc-eb096dbf'), ('11053', 'aba-studio-productions-caixesbbxxx-f03afd1f')]
+[INFO] origen_destino_dian.scripts.run_formulario | PASO 5 → nuevos=5 | actualizados=0 | sin_match=75
+[INFO] origen_destino_dian.scripts.run_formulario | origenDestino.xlsx guardado (solo 'Llave Origen Destino' modificado, resto intacto).
+[INFO] origen_destino_dian.scripts.run_formulario | === FIN CRUCE [GTO] ===  Formularios=133 | Llaves=136
+[INFO] origen_destino_dian.main | ── PASO 3 completado [GTO] ──
