@@ -815,7 +815,7 @@ def _update_od_llave(path: Path, df_swift_all: pd.DataFrame) -> None:
     for row_idx in range(2, ws.max_row + 1):
         raw_val = ws.cell(row=row_idx, column=col_consec).value
 
-        if raw_val is None:
+        if raw_val is None or str(raw_val).strip().lower() in ("", "nan", "none", "nat"):
             continue
 
         # Normalizar consecutivo sin ceros iniciales (igual que formulario_str)

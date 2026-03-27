@@ -173,7 +173,7 @@ def _run_post_manual(
     try:
         from scripts.post_validacion_swift import (
             contar_listos_en_manuales,
-            ejecutar_mover_manuales,
+            run_post_validacion,
         )
 
         listos, pendientes = contar_listos_en_manuales(tipo=tipo)
@@ -195,10 +195,9 @@ def _run_post_manual(
                 print("  → Cancelado.\n")
                 return
 
-        movidos = ejecutar_mover_manuales(tipo=tipo)
-        result.manuales_movidos    = movidos
+        stats = run_post_validacion(tipo=tipo)
+        result.manuales_movidos    = stats.get("movidos", 0)
         result.manuales_pendientes = pendientes
-        LOGGER.info(f"── PASO 2 completado: {movidos} movidos [{tipo.upper()}] ──")
 
     except Exception as e:
         LOGGER.error(f"Error en post validación: {e}", exc_info=True)

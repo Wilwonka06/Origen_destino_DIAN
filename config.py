@@ -64,9 +64,8 @@ SWIFT_COMPLETOS_IMP: Path = DIR_RESULTADOS / "Swift_completos.xlsx"
 SWIFT_MANUALES_IMP:  Path = DIR_RESULTADOS / "Swift_manuales.xlsx"
 CACHE_FILE_IMP:      Path = DIR_RESULTADOS / ".procesados_cache.json"
 
-# Plantillas Bancolombia IMP
-PLANTILLA_V1_IMP: Path = DIR_PLANTILLAS / "Datos_Origen_Destino_V1.xlsx"
-PLANTILLA_V2_IMP: Path = DIR_PLANTILLAS / "Datos_Origen_Destino_V2.xlsx"
+# Plantilla Bancolombia IMP
+PLANTILLA_IMP: Path = DIR_PLANTILLAS / "Datos_Origen_Destino.xlsx"
 
 # ── Alias legacy (compatibilidad con scripts que importan el nombre corto) ──
 DIR_SWIFT_RAIZ    = DIR_SWIFT_RAIZ_IMP
@@ -77,8 +76,7 @@ SWIFT_COMPLETOS   = SWIFT_COMPLETOS_IMP
 SWIFT_MANUALES    = SWIFT_MANUALES_IMP
 ACUMULADO_SWIFT   = DIR_RESULTADOS / "Acumulado_swift.xlsx"
 CACHE_FILE        = CACHE_FILE_IMP
-PLANTILLA_V1      = PLANTILLA_V1_IMP
-PLANTILLA_V2      = PLANTILLA_V2_IMP
+PLANTILLA      = PLANTILLA_IMP
 
 # =========================================================
 # EXP — Exportaciones
@@ -102,9 +100,8 @@ SWIFT_MANUALES_EXP:  Path = DIR_RESULTADOS / "Swift_manuales_exp.xlsx"
 ACUMULADO_SWIFT_EXP: Path = DIR_RESULTADOS / "Acumulado_swift_exp.xlsx"
 CACHE_FILE_EXP:      Path = DIR_RESULTADOS / ".procesados_cache_exp.json"
 
-# Plantillas Bancolombia EXP
-PLANTILLA_V1_EXP: Path = DIR_PLANTILLAS / "Datos_Origen_Destino_V1_exp.xlsx"
-PLANTILLA_V2_EXP: Path = DIR_PLANTILLAS / "Datos_Origen_Destino_V2_exp.xlsx"
+# Plantilla Bancolombia EXP
+PLANTILLA_EXP: Path = DIR_PLANTILLAS / "Datos_Origen_Destino_exp.xlsx"
 
 # =========================================================
 # EXP — Servicios
@@ -129,9 +126,8 @@ SWIFT_MANUALES_GTO:  Path = DIR_RESULTADOS / "Swift_manuales_gto.xlsx"
 ACUMULADO_SWIFT_GTO: Path = DIR_RESULTADOS / "Acumulado_swift_gto.xlsx"
 CACHE_FILE_GTO:      Path = DIR_RESULTADOS / ".procesados_cache_gto.json"
 
-# Plantillas Bancolombia GTO
-PLANTILLA_V1_GTO: Path = DIR_PLANTILLAS / "Datos_Origen_Destino_V1_gto.xlsx"
-PLANTILLA_V2_GTO: Path = DIR_PLANTILLAS / "Datos_Origen_Destino_V2_gto.xlsx"
+# Plantilla Bancolombia GTO
+PLANTILLA_GTO: Path = DIR_PLANTILLAS / "Datos_Origen_Destino_gto.xlsx"
 
 # =========================================================
 # ARCHIVOS DE ENTRADA (Bases de datos) — compartidos
@@ -144,8 +140,9 @@ ORIGEN_DESTINO:  Path = DIR_DBS / "origenDestino.xlsx"
 # =========================================================
 # NOMBRES DE HOJAS EXCEL
 # =========================================================
-SHEET_V1           = "V1"
-SHEET_V2           = "V2"
+SHEET_V1           = "V1"          # hoja de trabajo en Swift_completos / Swift_manuales
+SHEET_V2           = "V2"          # hoja de trabajo en Swift_completos / Swift_manuales
+SHEET_PLANTILLA    = "Datos"       # hoja única en las plantillas Bancolombia
 SHEET_ACUMULADO    = "Acumulado"
 SHEET_COM          = "COM"
 SHEET_OD_DATOS     = "Datos Origen Destino"
